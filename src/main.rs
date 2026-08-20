@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use momonogi::{configure, lifecycle, logo, store};
+use momonogi::{configure, lifecycle, logo, store, tag};
 use serde_json::json;
 use std::fs;
 use std::io::Write;
@@ -28,6 +28,7 @@ enum Command {
     Put(PutArgs),
     Archive(ArchiveArgs),
     Access(AccessArgs),
+    Tag(TagArgs),
     Reindex(WriterRoot),
     Doctor(Root),
     Logo,
@@ -185,6 +186,38 @@ struct AccessRevokeArgs {
     agent: String,
     #[arg(long = "by")]
     actor: String,
+    #[arg(long)]
+    if_match: String,
+}
+
+#[derive(Args)]
+struct TagArgs {
+    #[command(subcommand)]
+    command: TagCommand,
+}
+
+#[derive(Subcommand)]
+enum TagCommand {
+    List(TagListArgs),
+    Add(TagMutationArgs),
+    Remove(TagMutationArgs),
+}
+
+#[derive(Args)]
+struct TagListArgs {
+    #[arg(default_value = store::DEFAULT_GLOBAL_ROOT)]
+    root: PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct TagMutationArgs {
+    root: PathBuf,
+    slug: String,
+    tag: String,
+    #[arg(long)]
+    agent: String,
     #[arg(long)]
     if_match: String,
 }
@@ -684,6 +717,40 @@ fn command_access(args: AccessArgs) -> Result<()> {
     }
 }
 
+fn command_tag(args: TagArgs) -> Result<()> {
+    match args.command {
+        TagCommand::List(args) => {
+            let root = canonical_existing(&args.root)?;
+            let tags = tag::list_tags(&root)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&tags)?);
+            } else {
+                println!("[momo] {} tag(s) in {}", tags.len(), root.display());
+                for tag in tags {
+                    println!("- {} ({})", tag.name, tag.count);
+                }
+            }
+            Ok(())
+        }
+        TagCommand::Add(args) => command_tag_mutation(args, tag::TagAction::Add),
+        TagCommand::Remove(args) => command_tag_mutation(args, tag::TagAction::Remove),
+    }
+}
+
+fn command_tag_mutation(args: TagMutationArgs, action: tag::TagAction) -> Result<()> {
+    let root = canonical_existing(&args.root)?;
+    let mutation = tag::change_tag(
+        &root,
+        &args.slug,
+        &args.tag,
+        action,
+        &args.agent,
+        &args.if_match,
+    )?;
+    println!("{}", serde_json::to_string(&mutation)?);
+    Ok(())
+}
+
 fn command_reindex(args: WriterRoot) -> Result<()> {
     let root = canonical_existing(&args.root)?;
     store::assert_writer(&store::read_manifest(&root)?, &args.agent)?;
@@ -734,6 +801,7 @@ fn run(command: Command) -> Result<()> {
         Command::Put(args) => command_put(args),
         Command::Archive(args) => command_archive(args),
         Command::Access(args) => command_access(args),
+        Command::Tag(args) => command_tag(args),
         Command::Reindex(args) => command_reindex(args),
         Command::Doctor(args) => command_doctor(args),
         Command::Logo => {

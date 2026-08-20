@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { resetBrowserBridgeForTests, setAgentAccess } from "./bridge";
+import { changeMemoryTag, resetBrowserBridgeForTests, setAgentAccess } from "./bridge";
 import { App } from "./App";
 
 describe("Momonogi desktop shell", () => {
@@ -63,6 +63,99 @@ describe("Momonogi desktop shell", () => {
 
     expect(screen.getByRole("option", { name: /Old layout decision/ })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Interface preferences/ })).not.toBeInTheDocument();
+  });
+
+  it("adds normalized tags and refreshes the note revision", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Memories" }));
+    await user.click(await screen.findByRole("option", { name: /Momonogi Desktop/ }));
+    await screen.findByText(/Momonogi Desktop manages Agent access/);
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Tag writer identity" }), "codex");
+    await user.type(screen.getByRole("textbox", { name: "New tag" }), "Design System");
+    await user.click(screen.getByRole("button", { name: "Add tag" }));
+
+    expect(await screen.findByText("Tag added at revision 9.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove tag design-system" })).toBeInTheDocument();
+    expect(screen.getByText("r9")).toBeInTheDocument();
+  });
+
+  it("removes tags and treats duplicate additions as no-ops", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Memories" }));
+    await screen.findByText(/Agent permissions must remain explicit/);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Tag writer identity" }), "codex");
+
+    await user.type(screen.getByRole("textbox", { name: "New tag" }), "AGENTS");
+    await user.click(screen.getByRole("button", { name: "Add tag" }));
+    expect(await screen.findByText("Tags were already current.")).toBeInTheDocument();
+    expect(screen.getByText("r4")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Remove tag agents" }));
+    expect(await screen.findByText("Tag removed at revision 5.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove tag agents" })).not.toBeInTheDocument();
+  });
+
+  it("reloads current tags after an ETag conflict", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Memories" }));
+    await screen.findByText(/Agent permissions must remain explicit/);
+
+    await changeMemoryTag({
+      storePath: "~/.local/share/momonogi/store",
+      slug: "agent-access-policy.md",
+      tag: "external",
+      action: "add",
+      actor: "codex",
+      ifMatch: "mock-agent-access",
+    });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Tag writer identity" }), "codex");
+    await user.click(screen.getByRole("button", { name: "Remove tag agents" }));
+
+    expect(await screen.findByText("This memory changed elsewhere. Current tags were reloaded.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove tag external" })).toBeInTheDocument();
+    expect(screen.getByText("r5")).toBeInTheDocument();
+  });
+
+  it("rejects tag writes from a reader", async () => {
+    await expect(changeMemoryTag({
+      storePath: "~/.local/share/momonogi/store",
+      slug: "agent-access-policy.md",
+      tag: "blocked",
+      action: "add",
+      actor: "opencode",
+      ifMatch: "mock-agent-access",
+    })).rejects.toThrow("not a configured writer");
+  });
+
+  it("keeps archived memory tags read-only", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Memories" }));
+    await user.click(await screen.findByRole("option", { name: /Old layout decision/ }));
+
+    expect(await screen.findByText("Archived memories are read-only.")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Tag writer identity" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "New tag" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove tag/ })).not.toBeInTheDocument();
+  });
+
+  it("derives the tag index from memories and opens matching notes", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Tags" }));
+
+    expect(await screen.findByRole("row", { name: /design mixed 2/i })).toBeInTheDocument();
+    expect(screen.getByText("7 tags")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open design" }));
+
+    expect(screen.getByRole("searchbox", { name: "Search memories" })).toHaveValue("design");
+    expect(screen.getByRole("option", { name: /Interface preferences/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Old layout decision/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Agent access policy/ })).not.toBeInTheDocument();
   });
 
   it("opens discovered Agent configuration details", async () => {

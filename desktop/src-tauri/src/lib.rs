@@ -177,6 +177,32 @@ fn get_memory_detail(
     momonogi::explorer::read_memory(&source, &slug, archived).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn change_memory_tag(
+    app: tauri::AppHandle,
+    store_path: String,
+    slug: String,
+    tag: String,
+    action: momonogi::tag::TagAction,
+    actor: String,
+    if_match: String,
+) -> Result<momonogi::tag::TagMutation, String> {
+    let requested = PathBuf::from(store_path);
+    let source = memory_sources(&app)?
+        .into_iter()
+        .find(|source| source.path == requested)
+        .ok_or_else(|| "memory store is not registered".to_owned())?;
+    momonogi::tag::change_tag(
+        &source.path,
+        &slug,
+        &tag,
+        action,
+        &actor,
+        &if_match,
+    )
+    .map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -188,7 +214,8 @@ pub fn run() {
             register_project_store,
             remove_project_store,
             get_memory_index,
-            get_memory_detail
+            get_memory_detail,
+            change_memory_tag
         ])
         .run(tauri::generate_context!())
         .expect("error while running Momonogi Desktop");

@@ -87,12 +87,18 @@ export interface MemoryIndexPayload {
 
 export interface MemoryDetailPayload {
   summary: MemorySummary;
+  writers: string[];
   body: string;
   content: string;
 }
 
-export interface TagSummary {
-  name: string;
-  count: number;
-  scope: "global" | "mixed" | "project";
+export interface TagMutationPayload {
+  changed: boolean;
+  slug: string;
+  tag: string;
+  tags: string[];
+  revision: number;
+  etag: string;
+  indexLines: number;
+  indexBytes: number;
 }

@@ -116,6 +116,25 @@ fn keeps_valid_notes_when_another_note_is_malformed() {
 }
 
 #[test]
+fn isolates_notes_with_invalid_tags() {
+    let (_base, sources) = fixtures();
+    note(
+        &sources[0].path.join("invalid-tag.md"),
+        "Invalid tag",
+        "user",
+        "global",
+        "bad/tag",
+        "Body.",
+    );
+
+    let index = index_memories(&sources, &MemoryFilter::default());
+    assert_eq!(index.notes.len(), 3);
+    assert_eq!(index.issues.len(), 1);
+    assert_eq!(index.issues[0].slug.as_deref(), Some("invalid-tag.md"));
+    assert!(index.issues[0].message.contains("invalid tag"));
+}
+
+#[test]
 fn reads_complete_active_and_archived_note_details() {
     let (_base, sources) = fixtures();
     let active = read_memory(&sources[0], "preference.md", false).unwrap();

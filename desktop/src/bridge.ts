@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { agentCatalog } from "./agent-catalog";
 import { mockAgentDiscovery, mockMemories, mockMemoryBodies, mockStores } from "./mock-data";
-import type { AccessUpdateInput, AccessUpdatePayload, AgentDiscoveryPayload, BootstrapPayload, MemoryDetailPayload, MemoryIndexPayload, StoreSummary } from "./types";
+import type { AccessUpdateInput, AccessUpdatePayload, AgentDiscoveryPayload, BootstrapPayload, MemoryDetailPayload, MemoryIndexPayload, StoreSummary, TagMutationPayload } from "./types";
 
 const browserPayload: BootstrapPayload = {
   appVersion: "0.1.0-dev",
@@ -11,10 +11,12 @@ const browserPayload: BootstrapPayload = {
 
 let browserDiscovery = structuredClone(mockAgentDiscovery);
 let browserStores = structuredClone(mockStores);
+let browserMemories = structuredClone(mockMemories);
 
 export function resetBrowserBridgeForTests(): void {
   browserDiscovery = structuredClone(mockAgentDiscovery);
   browserStores = structuredClone(mockStores);
+  browserMemories = structuredClone(mockMemories);
 }
 
 export async function getStoreRegistry(): Promise<StoreSummary[]> {
@@ -54,7 +56,7 @@ export async function getMemoryIndex(): Promise<MemoryIndexPayload> {
       filter: { search: "", memoryTypes: [], statuses: [], scopes: [], archive: "all" },
     });
   }
-  return { notes: structuredClone(mockMemories), issues: [] };
+  return { notes: structuredClone(browserMemories), issues: [] };
 }
 
 export async function getMemoryDetail(
@@ -65,12 +67,60 @@ export async function getMemoryDetail(
   if (isTauriRuntime()) {
     return invoke<MemoryDetailPayload>("get_memory_detail", { storePath, slug, archived });
   }
-  const summary = mockMemories.find(
+  const summary = browserMemories.find(
     (memory) => memory.storePath === storePath && memory.slug === slug && memory.archived === archived,
   );
   if (!summary) throw new Error(`memory not found: ${slug}`);
   const body = mockMemoryBodies[`${summary.storeId}:${summary.slug}`] ?? "";
-  return { summary: structuredClone(summary), body, content: `---\nname: ${summary.name}\n---\n\n${body}\n` };
+  return {
+    summary: structuredClone(summary),
+    writers: ["claude-code", "codex"],
+    body,
+    content: `---\nname: ${summary.name}\n---\n\n${body}\n`,
+  };
+}
+
+export async function changeMemoryTag(input: {
+  storePath: string;
+  slug: string;
+  tag: string;
+  action: "add" | "remove";
+  actor: string;
+  ifMatch: string;
+}): Promise<TagMutationPayload> {
+  if (isTauriRuntime()) {
+    return invoke<TagMutationPayload>("change_memory_tag", input);
+  }
+  const memory = browserMemories.find(
+    (item) => item.storePath === input.storePath && item.slug === input.slug && !item.archived,
+  );
+  if (!memory) throw new Error(`memory not found: ${input.slug}`);
+  if (!["claude-code", "codex"].includes(input.actor)) {
+    throw new Error(`agent ${JSON.stringify(input.actor)} is not a configured writer`);
+  }
+  if (memory.etag !== input.ifMatch) throw new Error("etag conflict");
+  const normalized = input.tag.trim().toLowerCase().replace(/\s+/g, "-");
+  if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(normalized)) throw new Error(`invalid tag ${JSON.stringify(input.tag)}`);
+  const tags = new Set(memory.tags);
+  const before = tags.size;
+  if (input.action === "add") tags.add(normalized);
+  else tags.delete(normalized);
+  const changed = tags.size !== before;
+  if (changed) {
+    memory.tags = [...tags].sort();
+    memory.revision += 1;
+    memory.etag = `mock-${memory.slug}-${memory.revision}`;
+  }
+  return {
+    changed,
+    slug: memory.slug,
+    tag: normalized,
+    tags: [...memory.tags],
+    revision: memory.revision,
+    etag: memory.etag,
+    indexLines: browserMemories.length,
+    indexBytes: 1024,
+  };
 }
 
 function isTauriRuntime(): boolean {

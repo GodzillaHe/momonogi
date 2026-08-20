@@ -6,6 +6,7 @@ import {
   Database,
   FolderPlus,
   FolderOpen,
+  Plus,
   RefreshCw,
   Search,
   Settings,
@@ -23,12 +24,12 @@ import {
   getMemoryDetail,
   getMemoryIndex,
   getStoreRegistry,
+  changeMemoryTag,
   registerProjectStore,
   removeProjectStore,
   setAgentAccess,
 } from "./bridge";
 import markUrl from "./assets/momonogi-mark.svg";
-import { mockTags } from "./mock-data";
 import type { AgentDiscoveryPayload, AgentRole, AgentSummary, BootstrapPayload, ManagedHookState, MemoryDetailPayload, MemoryIndexPayload, MemorySummary, StoreSummary, ViewId } from "./types";
 
 const views: Array<{ id: ViewId; label: string; icon: typeof UserRoundCog }> = [
@@ -371,11 +372,13 @@ function MemoriesView({
   index,
   loading,
   error,
+  onRefreshIndex,
 }: {
   query: string;
   index: MemoryIndexPayload | null;
   loading: boolean;
   error: string | null;
+  onRefreshIndex: () => Promise<void>;
 }) {
   const [memoryType, setMemoryType] = useState("all");
   const [status, setStatus] = useState("all");
@@ -384,6 +387,10 @@ function MemoriesView({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<MemoryDetailPayload | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [tagActor, setTagActor] = useState("");
+  const [tagInput, setTagInput] = useState("");
+  const [tagBusy, setTagBusy] = useState(false);
+  const [tagNotice, setTagNotice] = useState<AccessNotice | null>(null);
 
   const memories = useMemo(() => {
     const search = query.trim().toLowerCase();
@@ -427,7 +434,71 @@ function MemoriesView({
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [selected?.archived, selected?.etag, selected?.slug, selected?.storePath]);
+
+  useEffect(() => {
+    setTagNotice(null);
+    setTagInput("");
+  }, [selectedKey]);
+
+  useEffect(() => {
+    if (tagActor && !detail?.writers.includes(tagActor)) setTagActor("");
+  }, [detail?.writers, tagActor]);
+
+  async function mutateTag(tag: string, action: "add" | "remove") {
+    if (!detail || detail.summary.archived || tagBusy) return;
+    if (!tagActor) {
+      setTagNotice({ state: "error", text: "Choose a writer identity before changing tags." });
+      return;
+    }
+    const targetKey = memoryKey(detail.summary);
+    setTagBusy(true);
+    setTagNotice(null);
+    try {
+      const result = await changeMemoryTag({
+        storePath: detail.summary.storePath,
+        slug: detail.summary.slug,
+        tag,
+        action,
+        actor: tagActor,
+        ifMatch: detail.summary.etag,
+      });
+      await onRefreshIndex();
+      setDetail((current) => current && memoryKey(current.summary) === targetKey ? {
+        ...current,
+        summary: {
+          ...current.summary,
+          tags: result.tags,
+          revision: result.revision,
+          etag: result.etag,
+        },
+      } : current);
+      if (action === "add") setTagInput("");
+      setTagNotice({
+        state: "ok",
+        text: result.changed
+          ? `Tag ${action === "add" ? "added" : "removed"} at revision ${result.revision}.`
+          : "Tags were already current.",
+      });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (message.includes("etag conflict")) {
+        await onRefreshIndex();
+        const refreshed = await getMemoryDetail(detail.summary.storePath, detail.summary.slug, false);
+        setDetail((current) => current && memoryKey(current.summary) === targetKey ? refreshed : current);
+        setTagNotice({ state: "warning", text: "This memory changed elsewhere. Current tags were reloaded." });
+      } else {
+        setTagNotice({ state: "error", text: message });
+      }
+    } finally {
+      setTagBusy(false);
+    }
+  }
+
+  function submitTag(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (tagInput.trim()) void mutateTag(tagInput, "add");
+  }
 
   function rows(items: MemorySummary[]) {
     return items.map((memory) => (
@@ -496,8 +567,64 @@ function MemoriesView({
               </div>
               <p>{detail.summary.description}</p>
               <pre className="memory-body">{detail.body}</pre>
-              <div className="tag-line" aria-label="Tags">
-                {detail.summary.tags.map((tag) => <span key={tag}>{tag}</span>)}
+              <div className="memory-tags">
+                <div className="memory-tags__head">
+                  <h4>Tags</h4>
+                  {!detail.summary.archived && (
+                    <label className="tag-actor-picker">
+                      <ShieldCheck aria-hidden="true" size={14} />
+                      <span className="sr-only">Tag writer identity</span>
+                      <select aria-label="Tag writer identity" value={tagActor} onChange={(event) => setTagActor(event.target.value)}>
+                        <option value="">Choose writer</option>
+                        {detail.writers.map((writer) => <option key={writer} value={writer}>{writer}</option>)}
+                      </select>
+                    </label>
+                  )}
+                </div>
+                <div className="tag-line" aria-label="Tags">
+                  {detail.summary.tags.map((tag) => detail.summary.archived ? (
+                    <span key={tag}>{tag}</span>
+                  ) : (
+                    <button
+                      key={tag}
+                      type="button"
+                      disabled={tagBusy || !tagActor}
+                      aria-label={`Remove tag ${tag}`}
+                      title={`Remove ${tag}`}
+                      onClick={() => void mutateTag(tag, "remove")}
+                    >
+                      <span>{tag}</span><X aria-hidden="true" size={12} />
+                    </button>
+                  ))}
+                  {detail.summary.tags.length === 0 && <span className="tag-empty">No tags</span>}
+                </div>
+                {detail.summary.archived ? (
+                  <p className="tag-readonly">Archived memories are read-only.</p>
+                ) : (
+                  <form className="tag-editor" onSubmit={submitTag}>
+                    <label>
+                      <Tags aria-hidden="true" size={15} />
+                      <span className="sr-only">New tag</span>
+                      <input
+                        aria-label="New tag"
+                        value={tagInput}
+                        placeholder="Add tag"
+                        maxLength={64}
+                        disabled={tagBusy}
+                        onChange={(event) => setTagInput(event.target.value)}
+                      />
+                    </label>
+                    <button className="icon-button" type="submit" aria-label="Add tag" title="Add tag" disabled={tagBusy || !tagActor || !tagInput.trim()}>
+                      <Plus aria-hidden="true" size={16} />
+                    </button>
+                  </form>
+                )}
+                {tagNotice && (
+                  <div className="access-notice tag-notice" data-state={tagNotice.state} role={tagNotice.state === "error" ? "alert" : "status"}>
+                    {tagNotice.state === "ok" ? <Check aria-hidden="true" size={14} /> : <CircleAlert aria-hidden="true" size={14} />}
+                    <span>{tagNotice.text}</span>
+                  </div>
+                )}
               </div>
             </>
           ) : detailError ? (
@@ -511,13 +638,40 @@ function MemoriesView({
   );
 }
 
-function TagsView({ query }: { query: string }) {
-  const tags = mockTags.filter((tag) => tag.name.toLowerCase().includes(query.toLowerCase()));
+function TagsView({
+  query,
+  index,
+  onOpenTag,
+}: {
+  query: string;
+  index: MemoryIndexPayload | null;
+  onOpenTag: (tag: string) => void;
+}) {
+  const tags = useMemo(() => {
+    const counts = new Map<string, { count: number; scopes: Set<"global" | "project"> }>();
+    for (const memory of index?.notes ?? []) {
+      for (const name of memory.tags) {
+        const current = counts.get(name) ?? { count: 0, scopes: new Set<"global" | "project">() };
+        current.count += 1;
+        current.scopes.add(memory.storeKind);
+        counts.set(name, current);
+      }
+    }
+    const search = query.trim().toLowerCase();
+    return [...counts.entries()]
+      .map(([name, value]) => ({
+        name,
+        count: value.count,
+        scope: value.scopes.size > 1 ? "mixed" : [...value.scopes][0],
+      }))
+      .filter((tag) => tag.name.includes(search))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [index?.notes, query]);
   return (
     <section className="view tags-view" aria-labelledby="tags-heading">
       <div className="section-heading">
         <div><h2 id="tags-heading">Tag index</h2><p>Normalized across registered stores</p></div>
-        <button className="text-button" type="button">Manage tags<ChevronRight aria-hidden="true" size={16} /></button>
+        <span className="count-label">{tags.length} tags</span>
       </div>
       <div className="tag-table" role="table" aria-label="Tags">
         <div className="tag-table__head" role="row">
@@ -528,7 +682,7 @@ function TagsView({ query }: { query: string }) {
             <strong role="cell">{tag.name}</strong>
             <span role="cell">{tag.scope}</span>
             <span role="cell" className="mono-number">{tag.count}</span>
-            <button className="icon-button" type="button" aria-label={`Open ${tag.name}`} title={`Open ${tag.name}`}>
+            <button className="icon-button" type="button" aria-label={`Open ${tag.name}`} title={`Open ${tag.name}`} onClick={() => onOpenTag(tag.name)}>
               <ChevronRight aria-hidden="true" size={17} />
             </button>
           </div>
@@ -749,8 +903,16 @@ export function App() {
         onSetAccess={(agentId, role, actor) => void updateAccess(agentId, role, actor)}
       />
     );
-    if (active === "memories") return <MemoriesView query={query} index={memoryIndex} loading={refreshing && !memoryIndex} error={memoryError} />;
-    if (active === "tags") return <TagsView query={query} />;
+    if (active === "memories") return (
+      <MemoriesView
+        query={query}
+        index={memoryIndex}
+        loading={refreshing && !memoryIndex}
+        error={memoryError}
+        onRefreshIndex={async () => setMemoryIndex(await getMemoryIndex())}
+      />
+    );
+    if (active === "tags") return <TagsView query={query} index={memoryIndex} onOpenTag={(tag) => { setActive("memories"); setQuery(tag); }} />;
     return (
       <SettingsView
         bootstrap={bootstrap}

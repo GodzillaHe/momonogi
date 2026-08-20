@@ -1,4 +1,4 @@
-import type { AgentDiscoveryPayload, AgentSummary, MemorySummary, StoreSummary, TagSummary } from "./types";
+import type { AgentDiscoveryPayload, AgentSummary, MemorySummary, StoreSummary } from "./types";
 
 export const mockAgents: AgentSummary[] = [
   { id: "codex", name: "Codex", command: "codex", role: "writer", installed: true, configured: true, managed: true, hookState: "active", configPaths: ["~/.codex/AGENTS.md", "./.codex/hooks.json"] },
@@ -93,12 +93,3 @@ export const mockMemoryBodies: Record<string, string> = {
   "global:interface-preferences.md": "Operational tools should stay compact, direct, and easy to scan during repeated use.\n\nWhy: dense workflows benefit from predictable information placement.\n\nHow to apply: use rows, hairlines, and restrained status signals.",
   "momonogi:old-layout.md": "The earlier layout direction has been archived.\n\nWhy: it no longer matches the operational workbench.\n\nHow to apply: keep it for historical context only.",
 };
-
-export const mockTags: TagSummary[] = [
-  { name: "agents", count: 4, scope: "global" },
-  { name: "permissions", count: 3, scope: "global" },
-  { name: "desktop", count: 2, scope: "project" },
-  { name: "workflow", count: 2, scope: "mixed" },
-  { name: "design", count: 1, scope: "global" },
-  { name: "tauri", count: 1, scope: "project" },
-];

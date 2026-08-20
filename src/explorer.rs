@@ -1,5 +1,6 @@
 use crate::registry::{self, StoreKind};
 use crate::store::{self, Error, Note, Result};
+use crate::tag;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -72,6 +73,7 @@ pub struct MemoryIndex {
 #[serde(rename_all = "camelCase")]
 pub struct MemoryDetail {
     pub summary: MemorySummary,
+    pub writers: Vec<String>,
     pub body: String,
     pub content: String,
 }
@@ -90,28 +92,13 @@ pub fn registry_sources(registry_path: &Path, global_root: &Path) -> Result<Vec<
     Ok(sources)
 }
 
-fn tags(note: &Note) -> Vec<String> {
-    let mut tags: Vec<_> = note
-        .fields
-        .get("tags")
-        .into_iter()
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_lowercase)
-        .collect();
-    tags.sort();
-    tags.dedup();
-    tags
-}
-
 fn summary(
     source: &StoreSource,
     store_id: &str,
     slug: String,
     note: &Note,
     archived: bool,
-) -> MemorySummary {
+) -> Result<MemorySummary> {
     let scope = note.fields.get("scope").cloned().unwrap_or_else(|| {
         if source.kind == StoreKind::Global {
             "global".into()
@@ -119,7 +106,7 @@ fn summary(
             "repo".into()
         }
     });
-    MemorySummary {
+    Ok(MemorySummary {
         store_id: store_id.into(),
         store_kind: source.kind,
         store_path: source.path.to_string_lossy().into_owned(),
@@ -143,9 +130,9 @@ fn summary(
             .get("revision")
             .and_then(|value| value.parse().ok())
             .unwrap_or(0),
-        tags: tags(note),
+        tags: tag::tags_from_fields(&note.fields)?,
         etag: store::sha(note.text.as_bytes()),
-    }
+    })
 }
 
 pub fn filter_memories(notes: &[MemorySummary], filter: &MemoryFilter) -> Vec<MemorySummary> {
@@ -215,11 +202,10 @@ fn scan_directory(
         }
         let parsed = fs::read_to_string(&path)
             .map_err(Error::from)
-            .and_then(|text| store::parse_note(&text));
+            .and_then(|text| store::parse_note(&text))
+            .and_then(|note| summary(source, store_id, slug.clone(), &note, archived));
         match parsed {
-            Ok(note) => index
-                .notes
-                .push(summary(source, store_id, slug, &note, archived)),
+            Ok(note) => index.notes.push(note),
             Err(error) => index.issues.push(MemoryIssue {
                 store_path: source.path.to_string_lossy().into_owned(),
                 slug: Some(slug),
@@ -323,7 +309,8 @@ pub fn read_memory(source: &StoreSource, slug: &str, archived: bool) -> Result<M
             slug.into(),
             &note,
             archived,
-        ),
+        )?,
+        writers: loaded.manifest.writers,
         body: note.body,
         content,
     })
