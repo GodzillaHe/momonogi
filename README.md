@@ -1,7 +1,9 @@
 # Momonogi
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Momonogi is a local, file-based shared memory system for multiple AI agents. It
-ships as one Rust binary named `momo`.
+ships with a Rust CLI named `momo` and an optional macOS desktop app.
 
 - Agent roles are configurable per store. By default, Codex and Claude Code are
   equal writers while OpenCode and OpenClaw are readers.
@@ -121,10 +123,34 @@ For Agent-focused installation and trust checks, see
 
 ## Desktop app
 
-The optional Tauri desktop workbench discovers local Agent hosts, manages their
-store roles, previews host rule and hook changes before applying them, and
-browses global and registered project memories and tags. It bundles a matching
-`momo` sidecar for generated lifecycle hooks.
+Momonogi Desktop discovers local Agent hosts, manages their store roles,
+previews host rule and hook changes before applying them, and browses global
+and registered project memories and tags. It bundles a matching `momo` sidecar
+for generated lifecycle hooks.
+
+The current desktop prerelease is `0.0.1-alpha.2` for Apple Silicon Macs. Open
+[GitHub Releases](https://github.com/GodzillaHe/momonogi/releases) and download:
+
+- `Momonogi_0.0.1-alpha.2_aarch64.dmg`
+- `Momonogi_0.0.1-alpha.2_aarch64.dmg.sha256`
+
+Verify the download before opening it:
+
+```sh
+cd ~/Downloads
+shasum -a 256 -c Momonogi_0.0.1-alpha.2_aarch64.dmg.sha256
+```
+
+Open the DMG and move `Momonogi.app` to `/Applications`. The app uses an ad-hoc
+signature for bundle integrity. It has no Apple Developer ID signature or
+notarization, so macOS may require Control-click and Open on first launch. If
+Gatekeeper reports that the app is damaged after the checksum passes, remove
+the quarantine attribute from the installed copy:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Momonogi.app
+open /Applications/Momonogi.app
+```
 
 Build and deployment instructions are in
 [docs/DESKTOP_DEPLOYMENT.md](docs/DESKTOP_DEPLOYMENT.md).

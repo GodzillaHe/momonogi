@@ -1,16 +1,18 @@
 # Momonogi
 
-Momonogi 是一个供多个 AI Agent 共用的本地文件式记忆系统，发布为单个 Rust
-二进制，CLI 名为 `momo`。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-- 每个记忆库都可以自由配置 Agent 角色。默认情况下，Codex 与 Claude Code 是
-  平权写入者，OpenCode 与 OpenClaw 是只读使用者。
-- Markdown 记忆可直接查看、迁移和备份。
-- 内核文件锁串行化写入，ETag 阻止旧版本覆盖新修改。
-- `MEMORY.md` 只保存短索引，Agent 按需打开相关详情。
-- 生命周期 Hook 在压缩上下文前提醒写入者处理需要长期保留的信息。
+Momonogi 是一个面向多个 AI Agent、基于本地文件的共享记忆系统。项目包含名为
+`momo` 的 Rust CLI，以及可选的 macOS 桌面应用。
 
-## 安装
+- 每个记忆仓库都能单独配置 Agent 权限。默认情况下，Codex 和 Claude Code
+  拥有平等写入权限，OpenCode 和 OpenClaw 只读。
+- 记忆使用 Markdown 保存，便于迁移和人工检查。
+- 内核文件锁负责串行写入，ETag 用于拒绝过期更新。
+- `MEMORY.md` 只保留精简索引，Agent 仅在相关时读取详细记忆。
+- 生命周期 Hook 会在上下文压缩前提醒写入者整理需要长期保留的内容。
+
+## 安装 CLI
 
 需要 Rust 1.85 或更高版本。
 
@@ -19,7 +21,7 @@ cargo install --path . --locked --force
 momo --version
 ```
 
-新建全局记忆库：
+创建全局记忆仓库：
 
 ```sh
 momo init ~/.local/share/momonogi/store \
@@ -30,24 +32,24 @@ momo init ~/.local/share/momonogi/store \
   --reader openclaw
 ```
 
-兼容的旧 Markdown 记忆库可以原地接入：
+已有的兼容 Markdown 记忆仓库可以原地迁移：
 
 ```sh
 momo migrate ~/.local/share/momonogi/store --agent codex
 ```
 
-迁移不会修改记忆正文，只会补齐缺少的多写入者元数据并重新生成索引。
+迁移会保留记忆正文，为缺少元数据的记忆补充多写入者信息，并重新生成索引。
 
 ## 管理权限
 
-先查看当前角色和权限清单 ETag：
+查看当前角色和清单 ETag：
 
 ```sh
 momo access list ~/.local/share/momonogi/store --json
 ```
 
-当前任意 writer 都可以授予、更改或撤销 Agent 角色。修改必须携带最新的清单
-ETag，避免两个 writer 静默覆盖彼此的权限调整：
+当前写入者可以授予、修改或撤销任意 Agent 的角色。每次修改都需要传入当前清单
+ETag，因此两个写入者无法在无提示的情况下覆盖对方的权限变更：
 
 ```sh
 momo access grant ROOT opencode --role writer --by codex --if-match ETAG
@@ -55,9 +57,9 @@ momo access set ROOT openclaw --role reader --by codex --if-match ETAG
 momo access revoke ROOT openclaw --by codex --if-match ETAG
 ```
 
-`set` 是 `grant` 的别名。Momonogi 会拒绝非 writer 操作、过期 ETag、非法或重复的
-Agent ID，以及导致记忆库没有 writer 的修改。重复设置相同角色不会改变 revision
-或 ETag。
+`set` 是 `grant` 的别名。Momonogi 会拒绝无权限的操作者、过期 ETag、无效或重复的
+Agent ID，以及导致仓库失去最后一个写入者的修改。未改变角色的操作不会更新 revision
+和 ETag。
 
 ## 配置 Agent
 
@@ -71,58 +73,82 @@ momo configure \
   --openclaw-workspace /path/to/openclaw/workspace
 ```
 
-`configure` 只管理宿主规则文件中的 Momonogi 标记块。Claude Hook 全局写入
-`~/.claude/settings.json`；Codex Hook 是项目级配置，因此每个需要 Hook 的仓库都要传
-`--codex-project`。`--no-hooks` 可以只安装规则。其他规则和 Hook 处理器会被保留。
+`configure` 负责维护各 Agent 常规规则文件中的 Momonogi 标记区块。Claude Hook
+保存在全局 `~/.claude/settings.json`。Codex Hook 按项目配置，因此需要为每个仓库传入
+`--codex-project`。使用 `--no-hooks` 可以只安装规则。Momonogi 会保留与自身无关的
+规则和 Hook 处理器。
 
-`configure` 会读取权限清单，不再假设宿主角色固定。writer 获得写入规则和受管理的
-生命周期 Hook；reader 获得只读规则，同时移除 Momonogi 自己的 Hook；不在清单中的
-Agent 获得 no-access 规则。权限修改后需要为受影响的宿主重新运行 `configure`。
+`configure` 从角色清单读取权限，不会假定固定的 Agent 角色。写入者会获得写入规则和
+生命周期 Hook；只读者会获得只读规则，同时移除 Momonogi 管理的 Hook；清单中不存在的
+Agent 会获得禁止访问规则。修改权限后，需要为受影响的 Agent 重新运行 `configure`。
 
-OpenClaw 工作区规则会按当前宿主生效，避免共享的项目级 `AGENTS.md` 把 Codex 从
-写入者错误降级为只读者。
+OpenClaw 工作区规则会根据当前宿主生效，因此共享的项目级 `AGENTS.md` 不会把 Codex
+从写入者降为只读者。
 
-## 命令
+## CLI 命令
 
 | 命令 | 用途 |
 | --- | --- |
-| `momo init ROOT ...` | 创建记忆库和角色清单 |
-| `momo migrate ROOT --agent ID` | 接入兼容的已有记忆库 |
-| `momo list [ROOT]` | 列出全部有效记忆的元数据；默认使用全局库 |
+| `momo init ROOT ...` | 创建记忆仓库和角色清单 |
+| `momo migrate ROOT --agent ID` | 接管兼容的现有记忆仓库 |
+| `momo list [ROOT]` | 列出全部有效记忆元数据，默认读取全局仓库 |
 | `momo list --json` | 只输出元数据，不输出记忆正文 |
-| `momo get ROOT SLUG.md` | 获取当前 ETag |
+| `momo get ROOT SLUG.md` | 返回当前 ETag |
 | `momo get ROOT SLUG.md --content` | 读取一条记忆 |
 | `momo put ROOT FILE --agent ID` | 新增记忆 |
-| `momo put ... --if-match ETAG` | 在不覆盖并发修改的前提下更新 |
+| `momo put ... --if-match ETAG` | 更新记忆，并阻止并发覆盖 |
 | `momo archive ROOT SLUG.md --agent ID --if-match ETAG` | 归档记忆 |
 | `momo access list [ROOT] [--json]` | 查看角色、清单 revision 和 ETag |
-| `momo access grant ROOT ID --role ROLE --by WRITER --if-match ETAG` | 授予或调整角色，`set` 是别名 |
-| `momo access revoke ROOT ID --by WRITER --if-match ETAG` | 从清单移除 Agent |
+| `momo access grant ROOT ID --role ROLE --by WRITER --if-match ETAG` | 授予或修改角色，`set` 是其别名 |
+| `momo access revoke ROOT ID --by WRITER --if-match ETAG` | 从清单中移除 Agent |
 | `momo reindex ROOT --agent ID` | 重新生成 `MEMORY.md` |
-| `momo doctor ROOT` | 检查清单、记忆、索引与大小限制 |
-| `momo configure ...` | 安装 Agent 规则与生命周期 Hook |
+| `momo doctor ROOT` | 检查清单、记忆、索引和限制 |
+| `momo configure ...` | 安装宿主规则和生命周期 Hook |
 | `momo hook ...` | 生命周期 Hook 入口 |
-| `momo sync status ROOT` | 查看会话同步状态 |
-| `momo sync mark ROOT --session-id ID` | 标记会话已完成同步 |
-| `momo logo` | 显示 Momonogi Logo |
+| `momo sync status ROOT` | 查看生命周期同步状态 |
+| `momo sync mark ROOT --session-id ID` | 标记会话已完成整理 |
+| `momo logo` | 输出 Momonogi Logo |
 
-完整参数请运行 `momo COMMAND --help`。
+运行 `momo COMMAND --help` 可以查看完整参数。
 
-面向 Agent 的安装与信任检查见
-[docs/AGENT_SETUP.md](docs/AGENT_SETUP.md)，可复用的 Agent 协议见
-[skill/SKILL.md](skill/SKILL.md)。
+Agent 安装和信任检查见 [docs/AGENT_SETUP.md](docs/AGENT_SETUP.md)。可复用的 Agent
+协议位于 [skill/SKILL.md](skill/SKILL.md)。
 
 ## 桌面应用
 
-可选的 Tauri 桌面工作台可以发现本机 Agent 宿主、管理记忆库角色、在应用前预览
-规则与 Hook 变更，并浏览全局及已注册项目中的记忆与标签。应用包内包含匹配版本的
-`momo` sidecar，供生命周期 Hook 使用。
+Momonogi Desktop 可以发现本机 Agent、管理仓库角色、在应用规则和 Hook 变更前预览
+差异，并浏览全局及已登记项目中的记忆和标签。应用内置匹配版本的 `momo` sidecar，供
+生命周期 Hook 调用。
 
-构建和部署说明见 [docs/DESKTOP_DEPLOYMENT.md](docs/DESKTOP_DEPLOYMENT.md)。
+当前桌面预发布版本为 `0.0.1-alpha.2`，支持 Apple Silicon Mac。打开
+[GitHub Releases](https://github.com/GodzillaHe/momonogi/releases)，下载：
+
+- `Momonogi_0.0.1-alpha.2_aarch64.dmg`
+- `Momonogi_0.0.1-alpha.2_aarch64.dmg.sha256`
+
+打开 DMG 前先验证下载文件：
+
+```sh
+cd ~/Downloads
+shasum -a 256 -c Momonogi_0.0.1-alpha.2_aarch64.dmg.sha256
+```
+
+打开 DMG，将 `Momonogi.app` 移入 `/Applications`。应用使用 ad-hoc 签名保证包内
+文件完整，但没有 Apple Developer ID 签名，也未经过公证。macOS 首次启动时可能要求
+右键应用并选择“打开”。校验通过后，如果 Gatekeeper 仍提示应用已损坏，可以移除已安装
+副本的隔离属性：
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Momonogi.app
+open /Applications/Momonogi.app
+```
+
+源码构建和发布流程见
+[docs/DESKTOP_DEPLOYMENT.md](docs/DESKTOP_DEPLOYMENT.md)。
 
 ## 写入协议
 
-先在记忆库外创建草稿，再通过 `momo` 写入：
+先在正式记忆仓库外起草文件，再通过 `momo` 写入：
 
 ```markdown
 ---
@@ -145,20 +171,20 @@ How to apply: report the result, current risk, and next action in two sentences.
 momo put ~/.local/share/momonogi/store /tmp/concise-updates.md --agent codex
 ```
 
-更新前先获取 ETag，再通过 `--if-match` 提交。不要直接编辑规范库中的记忆文件或
+更新记忆前先读取 ETag，并通过 `--if-match` 传入。不要直接编辑正式记忆文件或
 `MEMORY.md`。
 
-## 部署到另一台电脑
+## 迁移到其他电脑
 
-1. 克隆 Momonogi 仓库，用 Cargo 安装 Rust 二进制。
-2. 单独复制或安全同步记忆库。记忆可能含有个人信息，不应提交到公开仓库。
-3. 配置前先运行 `momo doctor ROOT`。
-4. 根据另一台电脑上的 Agent 运行 `momo configure`。
+1. 克隆 Momonogi 仓库，通过 Cargo 安装 Rust CLI。
+2. 单独复制或安全同步记忆仓库。记忆可能包含个人信息，不要将其提交到公共仓库。
+3. 配置前运行 `momo doctor ROOT`。
+4. 为目标电脑上可用的 Agent 运行 `momo configure`。
 
-记忆库协议只依赖 `.momonogi.json`、`MEMORY.md`、Markdown 记忆文件以及可选的
-`archive/` 目录。安装完成后不依赖源码目录。
+记忆仓库由 `.momonogi.json`、`MEMORY.md`、Markdown 记忆文件和可选的 `archive/`
+目录组成。安装完成后，记忆仓库不依赖 Momonogi 源码目录。
 
-## 开发验证
+## 开发
 
 ```sh
 cargo fmt --check
@@ -166,5 +192,5 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 ```
 
-Momonogi 使用 MIT 许可证。第三方归属信息见
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，维护规范见 [docs/](docs/)。
+Momonogi 使用 MIT 许可证。第三方依赖声明见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，维护策略见 [docs/](docs/)。
