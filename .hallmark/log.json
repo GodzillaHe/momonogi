@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-08-20",
+    "macrostructure": "Workbench",
+    "theme": "custom",
+    "theme_axes": "light / grotesk-sans / chromatic-other",
+    "vibe": "technical restraint, peach-bright, tactile, local-first",
+    "enrichment": "Tier B peach mark",
+    "nav": "N3 Side-rail",
+    "footer": "Ft2 Inline status line",
+    "brief": "Momonogi desktop manager shell"
+  }
+]

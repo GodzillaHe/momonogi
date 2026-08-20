@@ -97,8 +97,15 @@ Gate: TypeScript check, frontend unit tests, Tauri compile, and screenshots at
 - Detect known binaries and canonical configuration paths.
 - Report installed, configured, role, and managed-hook state.
 - Show arbitrary manifest-only Agent IDs as generic entries.
+- Ship a versioned catalog of canonical names, aliases, commands, homepages,
+  surfaces, and bundled SVG brand marks.
+- Match discovered Agents against that catalog entirely on-device, without
+  uploading names or making runtime catalog requests.
+- Fall back to a generated monogram for unknown Agents until a later Momonogi
+  release expands the built-in catalog.
 
-Gate: adapter tests against temporary home layouts for all four known hosts.
+Gate: adapter tests against temporary home layouts for all four known hosts,
+plus catalog matching, bundled asset resolution, and fallback tests.
 
 ### 4. Access matrix
 

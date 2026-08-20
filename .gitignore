@@ -1,5 +1,12 @@
 # Rust
 /target/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+
+# Desktop frontend
+/desktop/node_modules/
+/desktop/dist/
+/desktop/*.tsbuildinfo
 
 # OS / editor
 .DS_Store

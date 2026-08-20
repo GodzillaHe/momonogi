@@ -1,0 +1,11 @@
+{
+  "scanned_at": "2026-08-20",
+  "source": "first desktop frontend",
+  "font_stack": null,
+  "palette": null,
+  "motion": "motion-cut",
+  "spacing": "no existing scale",
+  "framework": "Rust CLI; no existing frontend",
+  "preserve": ["Rust CLI behavior", "existing repository structure"],
+  "introduce": ["React", "Tauri 2", "4pt spacing tokens", "Hallmark Workbench"]
+}
