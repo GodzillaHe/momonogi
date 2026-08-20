@@ -58,6 +58,280 @@ fn put(root: &std::path::Path, source: &std::path::Path, agent: &str) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+fn access(root: &std::path::Path) -> Value {
+    let output = momo()
+        .args(["access", "list", root.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn grant(root: &std::path::Path, agent: &str, role: &str, actor: &str, etag: &str) -> Value {
+    let output = momo()
+        .args([
+            "access",
+            "grant",
+            root.to_str().unwrap(),
+            agent,
+            "--role",
+            role,
+            "--by",
+            actor,
+            "--if-match",
+            etag,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn managed_hook_count(config: &Value) -> usize {
+    ["SessionStart", "UserPromptSubmit", "PreCompact"]
+        .iter()
+        .map(|event| {
+            config["hooks"][event]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|group| group["hooks"].as_array())
+                .flatten()
+                .filter(|handler| {
+                    handler["statusMessage"]
+                        .as_str()
+                        .is_some_and(|value| value.starts_with("Momonogi:"))
+                })
+                .count()
+        })
+        .sum()
+}
+
+#[test]
+fn access_list_and_mutations_are_revisioned_and_role_aware() {
+    let base = TempDir::new().unwrap();
+    let root = init(&base);
+    let initial = access(&root);
+    assert_eq!(initial["revision"], 1);
+    assert_eq!(
+        initial["writers"],
+        serde_json::json!(["claude-code", "codex"])
+    );
+    assert_eq!(
+        initial["readers"],
+        serde_json::json!(["openclaw", "opencode"])
+    );
+    assert_eq!(initial["etag"].as_str().unwrap().len(), 64);
+
+    let promoted = grant(
+        &root,
+        "opencode",
+        "writer",
+        "codex",
+        initial["etag"].as_str().unwrap(),
+    );
+    assert_eq!(promoted["changed"], true);
+    assert_eq!(promoted["revision"], 2);
+    assert!(
+        promoted["writers"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::from("opencode"))
+    );
+
+    let source = base.path().join("opencode.md");
+    note(&source, "OpenCode", "user", "writer now\n");
+    assert_eq!(put(&root, &source, "opencode")["revision"], 1);
+
+    let downgraded = grant(
+        &root,
+        "claude-code",
+        "reader",
+        "opencode",
+        promoted["etag"].as_str().unwrap(),
+    );
+    assert_eq!(downgraded["revision"], 3);
+    let denied = base.path().join("denied-after-downgrade.md");
+    note(&denied, "Denied", "user", "reader now\n");
+    momo()
+        .args([
+            "put",
+            root.to_str().unwrap(),
+            denied.to_str().unwrap(),
+            "--agent",
+            "claude-code",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("not a configured writer"));
+
+    let revoked = momo()
+        .args([
+            "access",
+            "revoke",
+            root.to_str().unwrap(),
+            "openclaw",
+            "--by",
+            "codex",
+            "--if-match",
+            downgraded["etag"].as_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(revoked.status.success());
+    let revoked: Value = serde_json::from_slice(&revoked.stdout).unwrap();
+    assert_eq!(revoked["revision"], 4);
+    assert!(
+        !revoked["readers"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::from("openclaw"))
+    );
+
+    let arbitrary = grant(
+        &root,
+        "gemini-cli",
+        "reader",
+        "codex",
+        revoked["etag"].as_str().unwrap(),
+    );
+    assert!(
+        arbitrary["readers"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::from("gemini-cli"))
+    );
+}
+
+#[test]
+fn access_rejects_unauthorized_stale_and_last_writer_changes() {
+    let base = TempDir::new().unwrap();
+    let root = init(&base);
+    let initial = access(&root);
+    let etag = initial["etag"].as_str().unwrap();
+
+    momo()
+        .args([
+            "access",
+            "grant",
+            root.to_str().unwrap(),
+            "opencode",
+            "--role",
+            "writer",
+            "--by",
+            "openclaw",
+            "--if-match",
+            etag,
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("not a configured writer"));
+
+    let changed = grant(&root, "claude-code", "reader", "codex", etag);
+    momo()
+        .args([
+            "access",
+            "grant",
+            root.to_str().unwrap(),
+            "opencode",
+            "--role",
+            "writer",
+            "--by",
+            "codex",
+            "--if-match",
+            etag,
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("manifest etag conflict"));
+
+    momo()
+        .args([
+            "access",
+            "set",
+            root.to_str().unwrap(),
+            "codex",
+            "--role",
+            "reader",
+            "--by",
+            "codex",
+            "--if-match",
+            changed["etag"].as_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("final writer"));
+    momo()
+        .args([
+            "access",
+            "revoke",
+            root.to_str().unwrap(),
+            "codex",
+            "--by",
+            "codex",
+            "--if-match",
+            changed["etag"].as_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("final writer"));
+}
+
+#[test]
+fn access_noop_preserves_manifest_etag_and_revision() {
+    let base = TempDir::new().unwrap();
+    let root = init(&base);
+    let initial = access(&root);
+    let before = fs::read(root.join(".momonogi.json")).unwrap();
+    let unchanged = grant(
+        &root,
+        "opencode",
+        "reader",
+        "codex",
+        initial["etag"].as_str().unwrap(),
+    );
+    assert_eq!(unchanged["changed"], false);
+    assert_eq!(unchanged["etag"], initial["etag"]);
+    assert_eq!(unchanged["revision"], initial["revision"]);
+    assert_eq!(fs::read(root.join(".momonogi.json")).unwrap(), before);
+}
+
+#[test]
+fn legacy_schema_one_manifest_defaults_to_revision_one() {
+    let base = TempDir::new().unwrap();
+    let root = init(&base);
+    fs::write(
+        root.join(".momonogi.json"),
+        r#"{
+  "schema_version": 1,
+  "store_id": "legacy",
+  "writers": ["codex"],
+  "readers": ["opencode"]
+}
+"#,
+    )
+    .unwrap();
+    let legacy = access(&root);
+    assert_eq!(legacy["revision"], 1);
+    let updated = grant(
+        &root,
+        "opencode",
+        "writer",
+        "codex",
+        legacy["etag"].as_str().unwrap(),
+    );
+    assert_eq!(updated["revision"], 2);
+    assert_eq!(updated["updated_by"], "codex");
+}
+
 #[test]
 fn two_writers_share_revisioned_store_and_readers_cannot_write() {
     let base = TempDir::new().unwrap();
@@ -358,6 +632,198 @@ fn configure_is_idempotent_and_merges_lifecycle_hooks() {
     assert!(shared.contains("does not change its Momonogi role"));
     assert!(shared.contains("OpenClaw's native memory as primary"));
     assert!(!shared.contains("`OpenClaw` is a read-only consumer"));
+}
+
+#[test]
+fn configure_follows_manifest_roles_and_removes_only_managed_hooks() {
+    let base = TempDir::new().unwrap();
+    let root = init(&base);
+    let home = base.path().join("home");
+    let project = base.path().join("project");
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    fs::create_dir_all(project.join(".codex")).unwrap();
+    fs::write(
+        home.join(".claude/settings.json"),
+        r#"{"model":"keep","hooks":{"Stop":[{"hooks":[{"type":"command","command":"claude-audit"}]}]}}"#,
+    )
+    .unwrap();
+    fs::write(
+        project.join(".codex/hooks.json"),
+        r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"codex-audit"}]}]}}"#,
+    )
+    .unwrap();
+
+    momo()
+        .env("HOME", &home)
+        .args([
+            "configure",
+            "--host",
+            "codex",
+            "--host",
+            "claude",
+            "--codex-project",
+            project.to_str().unwrap(),
+            "--memory-root",
+            root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let claude: Value =
+        serde_json::from_str(&fs::read_to_string(home.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    let codex: Value =
+        serde_json::from_str(&fs::read_to_string(project.join(".codex/hooks.json")).unwrap())
+            .unwrap();
+    assert_eq!(managed_hook_count(&claude), 3);
+    assert_eq!(managed_hook_count(&codex), 3);
+
+    let current = access(&root);
+    let current = grant(
+        &root,
+        "claude-code",
+        "reader",
+        "codex",
+        current["etag"].as_str().unwrap(),
+    );
+    momo()
+        .env("HOME", &home)
+        .args([
+            "configure",
+            "--host",
+            "claude",
+            "--memory-root",
+            root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(
+        fs::read_to_string(home.join(".claude/CLAUDE.md"))
+            .unwrap()
+            .contains("Read Only")
+    );
+    let claude: Value =
+        serde_json::from_str(&fs::read_to_string(home.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(managed_hook_count(&claude), 0);
+    assert_eq!(claude["model"], "keep");
+    assert_eq!(
+        claude["hooks"]["Stop"][0]["hooks"][0]["command"],
+        "claude-audit"
+    );
+
+    let current = grant(
+        &root,
+        "opencode",
+        "writer",
+        "codex",
+        current["etag"].as_str().unwrap(),
+    );
+    grant(
+        &root,
+        "codex",
+        "reader",
+        "opencode",
+        current["etag"].as_str().unwrap(),
+    );
+    momo()
+        .env("HOME", &home)
+        .args([
+            "configure",
+            "--host",
+            "codex",
+            "--host",
+            "opencode",
+            "--codex-project",
+            project.to_str().unwrap(),
+            "--memory-root",
+            root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(
+        fs::read_to_string(home.join(".codex/AGENTS.md"))
+            .unwrap()
+            .contains("Read Only")
+    );
+    assert!(
+        fs::read_to_string(home.join(".config/opencode/AGENTS.md"))
+            .unwrap()
+            .contains("equal trusted writer with agent id `opencode`")
+    );
+    let codex: Value =
+        serde_json::from_str(&fs::read_to_string(project.join(".codex/hooks.json")).unwrap())
+            .unwrap();
+    assert_eq!(managed_hook_count(&codex), 0);
+    assert_eq!(
+        codex["hooks"]["Stop"][0]["hooks"][0]["command"],
+        "codex-audit"
+    );
+}
+
+#[test]
+fn openclaw_role_changes_remain_host_conditional_in_shared_projects() {
+    let base = TempDir::new().unwrap();
+    let root = init(&base);
+    let home = base.path().join("home");
+    let project = base.path().join("project");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&project).unwrap();
+    let current = access(&root);
+    let current = grant(
+        &root,
+        "openclaw",
+        "writer",
+        "codex",
+        current["etag"].as_str().unwrap(),
+    );
+    momo()
+        .env("HOME", &home)
+        .args([
+            "configure",
+            "--host",
+            "openclaw",
+            "--openclaw-workspace",
+            project.to_str().unwrap(),
+            "--memory-root",
+            root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let shared = fs::read_to_string(project.join("AGENTS.md")).unwrap();
+    assert!(shared.contains("Host Conditional"));
+    assert!(shared.contains("If the current host is not OpenClaw"));
+    assert!(shared.contains("equal trusted writer with agent id `openclaw`"));
+
+    momo()
+        .args([
+            "access",
+            "revoke",
+            root.to_str().unwrap(),
+            "openclaw",
+            "--by",
+            "codex",
+            "--if-match",
+            current["etag"].as_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    momo()
+        .env("HOME", &home)
+        .args([
+            "configure",
+            "--host",
+            "openclaw",
+            "--openclaw-workspace",
+            project.to_str().unwrap(),
+            "--memory-root",
+            root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let shared = fs::read_to_string(project.join("AGENTS.md")).unwrap();
+    assert_eq!(shared.matches("BEGIN MOMONOGI").count(), 1);
+    assert!(shared.contains("not granted access"));
+    assert!(shared.contains("does not change its Momonogi role"));
 }
 
 #[test]

@@ -3,8 +3,8 @@
 Momonogi is a local, file-based shared memory system for multiple AI agents. It
 ships as one Rust binary named `momo`.
 
-- Codex and Claude Code are equal, concurrent-safe writers.
-- OpenCode and OpenClaw are read-only consumers.
+- Agent roles are configurable per store. By default, Codex and Claude Code are
+  equal writers while OpenCode and OpenClaw are readers.
 - Markdown notes stay portable and inspectable.
 - Kernel file locks serialize writes; ETags reject stale updates.
 - `MEMORY.md` remains a small pointer index, so agents load detail only when it
@@ -40,6 +40,29 @@ momo migrate ~/.local/share/momonogi/store --agent codex
 Migration preserves note bodies, adds multi-writer metadata where missing, and
 regenerates the index.
 
+## Manage access
+
+Inspect the current roles and manifest ETag:
+
+```sh
+momo access list ~/.local/share/momonogi/store --json
+```
+
+A current writer can grant, change, or revoke any Agent role. Every mutation
+requires the current manifest ETag, so two writers cannot silently overwrite
+each other's access changes:
+
+```sh
+momo access grant ROOT opencode --role writer --by codex --if-match ETAG
+momo access set ROOT openclaw --role reader --by codex --if-match ETAG
+momo access revoke ROOT openclaw --by codex --if-match ETAG
+```
+
+`set` is an alias of `grant`. Momonogi rejects unauthorized actors, stale
+ETags, invalid or duplicate Agent IDs, and any change that would leave the
+store without a writer. A no-op assignment leaves the revision and ETag
+unchanged.
+
 ## Configure agents
 
 ```sh
@@ -57,6 +80,12 @@ are global in `~/.claude/settings.json`. Codex hooks are project-scoped, so pass
 each repository with `--codex-project`. Use `--no-hooks` to install rules only.
 Existing unrelated rules and hook handlers are preserved.
 
+`configure` reads the role manifest instead of assuming fixed host roles. A
+writer receives write rules and managed lifecycle hooks; a reader receives
+read-only rules and has Momonogi-managed hooks removed; an Agent absent from
+the manifest receives a no-access rule. Rerun `configure` for affected hosts
+after changing access.
+
 OpenClaw workspace rules are host-conditional so a shared project-level
 `AGENTS.md` cannot downgrade Codex from writer to reader.
 
@@ -73,6 +102,9 @@ OpenClaw workspace rules are host-conditional so a shared project-level
 | `momo put ROOT FILE --agent ID` | Add a note |
 | `momo put ... --if-match ETAG` | Update without overwriting a concurrent edit |
 | `momo archive ROOT SLUG.md --agent ID --if-match ETAG` | Archive a note |
+| `momo access list [ROOT] [--json]` | Show roles, manifest revision, and ETag |
+| `momo access grant ROOT ID --role ROLE --by WRITER --if-match ETAG` | Grant or change a role (`set` is an alias) |
+| `momo access revoke ROOT ID --by WRITER --if-match ETAG` | Remove an Agent from the manifest |
 | `momo reindex ROOT --agent ID` | Regenerate `MEMORY.md` |
 | `momo doctor ROOT` | Validate manifest, notes, index, and limits |
 | `momo configure ...` | Install host rules and lifecycle hooks |
@@ -117,7 +149,7 @@ canonical notes or `MEMORY.md` directly.
 
 ## Moving to another computer
 
-1. Clone Azusa and install the Rust binary with Cargo.
+1. Clone the Momonogi repository and install the Rust binary with Cargo.
 2. Copy or securely sync the memory store separately. It may contain personal
    data and should not be committed to a public repository.
 3. Run `momo doctor ROOT` before configuration.

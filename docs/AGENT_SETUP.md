@@ -9,6 +9,7 @@ rewriting memory bodies.
 momo --version
 momo doctor ~/.local/share/momonogi/store
 momo list ~/.local/share/momonogi/store --json
+momo access list ~/.local/share/momonogi/store --json
 ```
 
 `list --json` contains metadata only. Stop if `doctor` fails; do not repair or
@@ -16,7 +17,7 @@ migrate a store without confirming its ownership and intended writers.
 
 ## 2. Confirm roles
 
-The normal global manifest is:
+The default global manifest is:
 
 - writers: `codex`, `claude-code`
 - readers: `opencode`, `openclaw`
@@ -24,6 +25,17 @@ The normal global manifest is:
 Only configured writers may run `put`, `archive`, `reindex`, or migration.
 Readers must never edit, move, or copy the shared store into another memory
 system.
+
+Roles are not fixed. To change one, use the ETag returned by `access list`:
+
+```sh
+momo access grant ROOT AGENT --role writer --by CURRENT_WRITER --if-match ETAG
+momo access grant ROOT AGENT --role reader --by CURRENT_WRITER --if-match ETAG
+momo access revoke ROOT AGENT --by CURRENT_WRITER --if-match ETAG
+```
+
+Only a current writer can mutate roles, and Momonogi preserves at least one
+writer. Rerun host configuration after every role change.
 
 ## 3. Configure hosts
 
@@ -42,13 +54,15 @@ Claude lifecycle hooks are global. Codex lifecycle hooks are project-scoped;
 pass each trusted repository separately. Project hooks execute local commands,
 so inspect `.codex/hooks.json` and approve them through the host's trust UI.
 
-`configure` is idempotent. It replaces one marked Momonogi rules block and one
-managed handler per lifecycle event while preserving unrelated content. It
-refuses malformed JSON and symlinked configuration files.
+`configure` is idempotent and derives each known host's role from the manifest.
+It replaces one marked Momonogi rules block and, for writers, one managed
+handler per lifecycle event while preserving unrelated content. Downgrading or
+revoking a writer removes only Momonogi-managed handlers. It refuses malformed
+JSON and symlinked configuration files.
 
 OpenClaw workspace rules are host-conditional because the same `AGENTS.md` may
-also be loaded by Codex. They make OpenClaw read-only without overriding the
-global role of another host that opens the workspace.
+also be loaded by Codex. Writer, reader, and no-access policies for OpenClaw do
+not override the global role of another host that opens the workspace.
 
 ## 4. Verify configuration
 

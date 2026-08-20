@@ -34,10 +34,11 @@ raw prompts, or transient command output.
 labels. Use absolute dates. Keep one atomic fact per file and search metadata for
 duplicates before adding a note.
 
-## Writes
+## Roles and writes
 
-Codex uses agent id `codex`; Claude Code uses `claude-code`. OpenCode and
-OpenClaw are read-only and must not invoke mutating commands.
+Roles come from `.momonogi.json`; do not assume they are fixed. Known host IDs
+are `codex`, `claude-code`, `opencode`, and `openclaw`. An Agent may invoke
+mutating commands only when its ID is currently listed as a writer.
 
 Draft a note outside the store. Never edit canonical notes or `MEMORY.md`
 directly.
@@ -59,3 +60,8 @@ force an overwrite. Archiving also requires the current ETag.
 After maintenance, run `momo doctor MEMORY_ROOT`. Before manual compaction,
 reconcile durable work and run the `momo sync mark` command supplied by the
 lifecycle reminder.
+
+Only a current writer may change roles. Read the manifest ETag immediately
+before the change and use `momo access grant` or `momo access revoke` with
+`--by AGENT_ID --if-match ETAG`. Never remove or downgrade the final writer.
+Afterward, rerun `momo configure` for every affected known host.
