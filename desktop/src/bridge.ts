@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { agentCatalog } from "./agent-catalog";
-import { mockAgentDiscovery } from "./mock-data";
-import type { AccessUpdateInput, AccessUpdatePayload, AgentDiscoveryPayload, BootstrapPayload } from "./types";
+import { mockAgentDiscovery, mockStores } from "./mock-data";
+import type { AccessUpdateInput, AccessUpdatePayload, AgentDiscoveryPayload, BootstrapPayload, StoreSummary } from "./types";
 
 const browserPayload: BootstrapPayload = {
   appVersion: "0.1.0-dev",
@@ -10,9 +10,42 @@ const browserPayload: BootstrapPayload = {
 };
 
 let browserDiscovery = structuredClone(mockAgentDiscovery);
+let browserStores = structuredClone(mockStores);
 
 export function resetBrowserBridgeForTests(): void {
   browserDiscovery = structuredClone(mockAgentDiscovery);
+  browserStores = structuredClone(mockStores);
+}
+
+export async function getStoreRegistry(): Promise<StoreSummary[]> {
+  if (isTauriRuntime()) {
+    return invoke<StoreSummary[]>("get_store_registry");
+  }
+  return structuredClone(browserStores);
+}
+
+export async function registerProjectStore(projectPath: string): Promise<StoreSummary[]> {
+  if (isTauriRuntime()) {
+    return invoke<StoreSummary[]>("register_project_store", { projectPath });
+  }
+  const path = projectPath.trim();
+  if (!path) throw new Error("project store path is required");
+  if (browserStores.some((store) => store.path === path)) {
+    throw new Error(`project store is already registered: ${path}`);
+  }
+  const segments = path.split(/[\\/]/).filter(Boolean);
+  const leaf = segments.at(-1);
+  const name = leaf === ".momonogi" ? (segments.at(-2) ?? "project") : (leaf ?? "project");
+  browserStores.push({ kind: "project", path, health: "ready", storeId: name, revision: 1 });
+  return structuredClone(browserStores);
+}
+
+export async function removeProjectStore(projectPath: string): Promise<StoreSummary[]> {
+  if (isTauriRuntime()) {
+    return invoke<StoreSummary[]>("remove_project_store", { projectPath });
+  }
+  browserStores = browserStores.filter((store) => store.kind === "global" || store.path !== projectPath);
+  return structuredClone(browserStores);
 }
 
 function isTauriRuntime(): boolean {

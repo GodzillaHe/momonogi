@@ -1,4 +1,4 @@
-import type { AgentDiscoveryPayload, AgentSummary, MemorySummary, TagSummary } from "./types";
+import type { AgentDiscoveryPayload, AgentSummary, MemorySummary, StoreSummary, TagSummary } from "./types";
 
 export const mockAgents: AgentSummary[] = [
   { id: "codex", name: "Codex", command: "codex", role: "writer", installed: true, configured: true, managed: true, hookState: "active", configPaths: ["~/.codex/AGENTS.md", "./.codex/hooks.json"] },
@@ -14,6 +14,11 @@ export const mockAgentDiscovery: AgentDiscoveryPayload = {
   storeRevision: 24,
   storeEtag: "browser-etag-24",
 };
+
+export const mockStores: StoreSummary[] = [
+  { kind: "global", path: "~/.local/share/momonogi/store", health: "ready", storeId: "global", revision: 24 },
+  { kind: "project", path: "~/Code/momonogi/.momonogi", health: "ready", storeId: "momonogi", revision: 8 },
+];
 
 export const mockMemories: MemorySummary[] = [
   {

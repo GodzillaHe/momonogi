@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { resetBrowserBridgeForTests, setAgentAccess } from "./bridge";
 import { App } from "./App";
@@ -98,5 +98,21 @@ describe("Momonogi desktop shell", () => {
 
     expect(await screen.findByText("The store changed elsewhere. Current roles were reloaded.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "OpenCode: Writer" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("registers and removes a project store entry", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    expect(await screen.findByRole("heading", { name: "Store registry" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "global" })).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "Project store path" }), "/tmp/atlas/.momonogi");
+    await user.click(screen.getByRole("button", { name: "Register" }));
+    expect(await screen.findByRole("heading", { name: "atlas" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Remove atlas" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "atlas" })).not.toBeInTheDocument());
   });
 });

@@ -4,21 +4,30 @@ import {
   ChevronRight,
   CircleAlert,
   Database,
+  FolderPlus,
   FolderOpen,
   RefreshCw,
   Search,
   Settings,
   ShieldCheck,
   Tags,
+  Trash2,
   UserRoundCog,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AgentLogo } from "./AgentLogo";
-import { getAgentDiscovery, getBootstrap, setAgentAccess } from "./bridge";
+import {
+  getAgentDiscovery,
+  getBootstrap,
+  getStoreRegistry,
+  registerProjectStore,
+  removeProjectStore,
+  setAgentAccess,
+} from "./bridge";
 import markUrl from "./assets/momonogi-mark.svg";
 import { mockMemories, mockTags } from "./mock-data";
-import type { AgentDiscoveryPayload, AgentRole, AgentSummary, BootstrapPayload, ManagedHookState, ViewId } from "./types";
+import type { AgentDiscoveryPayload, AgentRole, AgentSummary, BootstrapPayload, ManagedHookState, StoreSummary, ViewId } from "./types";
 
 const views: Array<{ id: ViewId; label: string; icon: typeof UserRoundCog }> = [
   { id: "agents", label: "Agents", icon: UserRoundCog },
@@ -438,7 +447,28 @@ function TagsView({ query }: { query: string }) {
   );
 }
 
-function SettingsView({ bootstrap }: { bootstrap: BootstrapPayload | null }) {
+function SettingsView({
+  bootstrap,
+  stores,
+  registryError,
+  registryBusy,
+  onRegister,
+  onRemove,
+}: {
+  bootstrap: BootstrapPayload | null;
+  stores: StoreSummary[];
+  registryError: string | null;
+  registryBusy: boolean;
+  onRegister: (path: string) => Promise<boolean>;
+  onRemove: (path: string) => Promise<void>;
+}) {
+  const [projectPath, setProjectPath] = useState("");
+
+  async function submitProject(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (await onRegister(projectPath)) setProjectPath("");
+  }
+
   return (
     <section className="view settings-view" aria-labelledby="settings-heading">
       <div className="section-heading">
@@ -450,6 +480,53 @@ function SettingsView({ bootstrap }: { bootstrap: BootstrapPayload | null }) {
         <div><dt>Core schema</dt><dd><code>v{bootstrap?.coreSchema ?? "-"}</code></dd></div>
         <div><dt>Bridge</dt><dd><span className="runtime-badge">{bootstrap?.bridge ?? "loading"}</span></dd></div>
       </dl>
+
+      <div className="section-heading store-registry-heading">
+        <div><h2>Store registry</h2><p>Global and explicitly registered project stores</p></div>
+        <span className="count-label">{stores.length} stores</span>
+      </div>
+      <form className="store-register" onSubmit={(event) => void submitProject(event)}>
+        <label>
+          <span className="sr-only">Project store path</span>
+          <FolderPlus aria-hidden="true" size={17} />
+          <input
+            value={projectPath}
+            aria-label="Project store path"
+            placeholder="/path/to/project/.momonogi"
+            onChange={(event) => setProjectPath(event.target.value)}
+          />
+        </label>
+        <button className="secondary-button" type="submit" disabled={registryBusy || !projectPath.trim()}>
+          Register
+        </button>
+      </form>
+      {registryError && <div className="access-notice registry-notice" role="alert"><CircleAlert aria-hidden="true" size={15} />{registryError}</div>}
+      <div className="store-list" role="list" aria-label="Registered stores">
+        {stores.map((store) => (
+          <article className="store-row" role="listitem" key={`${store.kind}:${store.path}`}>
+            <Database aria-hidden="true" size={18} />
+            <div className="store-row__identity">
+              <h3>{store.storeId ?? (store.kind === "global" ? "Global store" : "Project store")}</h3>
+              <code title={store.path}>{store.path}</code>
+            </div>
+            <span className="store-health" data-health={store.health}>{store.health}</span>
+            <code className="store-revision">r{store.revision ?? "-"}</code>
+            {store.kind === "project" ? (
+              <button
+                className="icon-button"
+                type="button"
+                aria-label={`Remove ${store.storeId ?? store.path}`}
+                title="Remove from registry"
+                disabled={registryBusy}
+                onClick={() => void onRemove(store.path)}
+              >
+                <Trash2 aria-hidden="true" size={16} />
+              </button>
+            ) : <span className="store-row__fixed" />}
+            {store.issue && <p className="store-row__issue">{store.issue}</p>}
+          </article>
+        ))}
+      </div>
     </section>
   );
 }
@@ -472,16 +549,29 @@ export function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [savingAgentId, setSavingAgentId] = useState<string | null>(null);
   const [accessNotice, setAccessNotice] = useState<AccessNotice | null>(null);
+  const [stores, setStores] = useState<StoreSummary[]>([]);
+  const [registryError, setRegistryError] = useState<string | null>(null);
+  const [registryBusy, setRegistryBusy] = useState(false);
 
   const refreshData = useCallback(async () => {
     setRefreshing(true);
     setDiscoveryError(null);
-    const [bootstrapResult, discoveryResult] = await Promise.allSettled([getBootstrap(), getAgentDiscovery()]);
+    setRegistryError(null);
+    const [bootstrapResult, discoveryResult, registryResult] = await Promise.allSettled([
+      getBootstrap(),
+      getAgentDiscovery(),
+      getStoreRegistry(),
+    ]);
     if (bootstrapResult.status === "fulfilled") setBootstrap(bootstrapResult.value);
     if (discoveryResult.status === "fulfilled") {
       setAgentDiscovery(discoveryResult.value);
     } else {
       setDiscoveryError(discoveryResult.reason instanceof Error ? discoveryResult.reason.message : String(discoveryResult.reason));
+    }
+    if (registryResult.status === "fulfilled") {
+      setStores(registryResult.value);
+    } else {
+      setRegistryError(registryResult.reason instanceof Error ? registryResult.reason.message : String(registryResult.reason));
     }
     setRefreshing(false);
   }, []);
@@ -518,6 +608,32 @@ export function App() {
     }
   }, [agentDiscovery?.storeEtag, refreshData]);
 
+  const addProjectStore = useCallback(async (path: string) => {
+    setRegistryBusy(true);
+    setRegistryError(null);
+    try {
+      setStores(await registerProjectStore(path));
+      return true;
+    } catch (cause) {
+      setRegistryError(cause instanceof Error ? cause.message : String(cause));
+      return false;
+    } finally {
+      setRegistryBusy(false);
+    }
+  }, []);
+
+  const removeStore = useCallback(async (path: string) => {
+    setRegistryBusy(true);
+    setRegistryError(null);
+    try {
+      setStores(await removeProjectStore(path));
+    } catch (cause) {
+      setRegistryError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRegistryBusy(false);
+    }
+  }, []);
+
   const content = useMemo(() => {
     if (active === "agents") return (
       <AgentsView
@@ -532,8 +648,17 @@ export function App() {
     );
     if (active === "memories") return <MemoriesView query={query} />;
     if (active === "tags") return <TagsView query={query} />;
-    return <SettingsView bootstrap={bootstrap} />;
-  }, [accessNotice, active, agentDiscovery, bootstrap, discoveryError, query, refreshing, savingAgentId, updateAccess]);
+    return (
+      <SettingsView
+        bootstrap={bootstrap}
+        stores={stores}
+        registryError={registryError}
+        registryBusy={registryBusy}
+        onRegister={addProjectStore}
+        onRemove={removeStore}
+      />
+    );
+  }, [accessNotice, active, addProjectStore, agentDiscovery, bootstrap, discoveryError, query, refreshing, registryBusy, registryError, removeStore, savingAgentId, stores, updateAccess]);
 
   function changeView(view: ViewId) {
     setActive(view);

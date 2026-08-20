@@ -2,6 +2,7 @@ use momonogi::discovery::{AgentProbe, DiscoveredAgent, DiscoveryInput};
 use serde::Serialize;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use tauri::Manager;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,13 +105,56 @@ fn set_agent_access(
     })
 }
 
+fn registry_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join("stores.json"))
+        .map_err(|error| format!("cannot resolve application config directory: {error}"))
+}
+
+#[tauri::command]
+fn get_store_registry(
+    app: tauri::AppHandle,
+) -> Result<Vec<momonogi::registry::StoreEntry>, String> {
+    let registry = registry_path(&app)?;
+    let global = momonogi::store::expand_path(momonogi::store::DEFAULT_GLOBAL_ROOT);
+    momonogi::registry::inspect_registry(&registry, &global).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn register_project_store(
+    app: tauri::AppHandle,
+    project_path: String,
+) -> Result<Vec<momonogi::registry::StoreEntry>, String> {
+    let registry = registry_path(&app)?;
+    let global = momonogi::store::expand_path(momonogi::store::DEFAULT_GLOBAL_ROOT);
+    momonogi::registry::register_project_store(&registry, &global, PathBuf::from(project_path).as_path())
+        .map_err(|error| error.to_string())?;
+    momonogi::registry::inspect_registry(&registry, &global).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn remove_project_store(
+    app: tauri::AppHandle,
+    project_path: String,
+) -> Result<Vec<momonogi::registry::StoreEntry>, String> {
+    let registry = registry_path(&app)?;
+    let global = momonogi::store::expand_path(momonogi::store::DEFAULT_GLOBAL_ROOT);
+    momonogi::registry::remove_project_store(&registry, PathBuf::from(project_path).as_path())
+        .map_err(|error| error.to_string())?;
+    momonogi::registry::inspect_registry(&registry, &global).map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             bootstrap,
             discover_agents,
-            set_agent_access
+            set_agent_access,
+            get_store_registry,
+            register_project_store,
+            remove_project_store
         ])
         .run(tauri::generate_context!())
         .expect("error while running Momonogi Desktop");

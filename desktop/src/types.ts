@@ -45,6 +45,18 @@ export interface AccessUpdateInput {
   ifMatch: string;
 }
 
+export type StoreKind = "global" | "project";
+export type StoreHealth = "ready" | "missing" | "invalid";
+
+export interface StoreSummary {
+  kind: StoreKind;
+  path: string;
+  health: StoreHealth;
+  storeId?: string;
+  revision?: number;
+  issue?: string;
+}
+
 export interface MemorySummary {
   slug: string;
   title: string;
