@@ -1,0 +1,12 @@
+# Rust
+/target/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# A real memory store belongs outside the source checkout.
+MEMORY.md

@@ -1,0 +1,69 @@
+name: Bug report
+description: The CLI, store, hooks, or doctor are not behaving as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For **security-sensitive** issues do NOT file here —
+        follow the private reporting instructions in docs/SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected vs. what you got. Paste the exact command and its output.
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - CLI / store
+        - lifecycle hooks
+        - agent configuration
+        - doctor / reindex
+        - docs / templates
+        - other
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host / agent
+      description: e.g. Codex, Claude Code, OpenCode, or OpenClaw.
+      placeholder: Codex CLI 0.x
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Windows 11 / macOS 14 / Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: momo
+    attributes:
+      label: Momonogi version
+      description: Output of `momo --version`.
+      placeholder: "momo 1.0.0"
+    validations:
+      required: true
+  - type: textarea
+    id: hook_payload
+    attributes:
+      label: For a hook bug - event payload and state
+      description: >
+        Redact private prompt text and secrets. Include event names, trigger values,
+        and `momo sync status` output only when relevant.
+      render: json
+    validations:
+      required: false
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal repro
+      description: The smallest steps / files that trigger it.
+    validations:
+      required: false
