@@ -1,13 +1,18 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { resetBrowserBridgeForTests, setAgentAccess } from "./bridge";
 import { App } from "./App";
 
 describe("Momonogi desktop shell", () => {
+  beforeEach(() => {
+    resetBrowserBridgeForTests();
+  });
+
   it("shows the agent workbench and browser bridge status", async () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "Access matrix" })).toBeInTheDocument();
-    expect(await screen.findByText("Claude Code")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Claude Code" })).toBeInTheDocument();
     expect(await screen.findByText("Development bridge")).toBeInTheDocument();
   });
 
@@ -38,7 +43,7 @@ describe("Momonogi desktop shell", () => {
   it("opens discovered Agent configuration details", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText("Claude Code");
+    await screen.findByRole("heading", { name: "Claude Code" });
 
     await user.click(screen.getByRole("button", { name: "Open Claude Code" }));
 
@@ -47,5 +52,51 @@ describe("Momonogi desktop shell", () => {
     expect(within(inspector).getByText("~/.claude/settings.json")).toBeInTheDocument();
     expect(within(inspector).getByText("Hooks active")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close Agent details" })).toBeInTheDocument();
+  });
+
+  it("requires a writer identity before changing Agent access", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("OpenCode");
+
+    const writerButton = screen.getByRole("button", { name: "OpenCode: Writer" });
+    expect(writerButton).toBeDisabled();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Writer identity" }), "codex");
+    expect(writerButton).toBeEnabled();
+    await user.click(writerButton);
+
+    expect(await screen.findByText("Access updated at revision 25.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "OpenCode: Writer" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("prevents removing the final writer", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Claude Code" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Writer identity" }), "codex");
+    await user.click(screen.getByRole("button", { name: "Claude Code: Reader" }));
+    await screen.findByText("Access updated at revision 25.");
+
+    expect(screen.getByRole("button", { name: "Codex: Reader" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Codex: None" })).toBeDisabled();
+  });
+
+  it("reloads current roles after an ETag conflict", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "OpenCode" });
+
+    await setAgentAccess({
+      agentId: "opencode",
+      role: "writer",
+      actor: "codex",
+      ifMatch: "browser-etag-24",
+    });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Writer identity" }), "codex");
+    await user.click(screen.getByRole("button", { name: "OpenClaw: Writer" }));
+
+    expect(await screen.findByText("The store changed elsewhere. Current roles were reloaded.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "OpenCode: Writer" })).toHaveAttribute("aria-pressed", "true");
   });
 });

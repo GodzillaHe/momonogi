@@ -261,7 +261,7 @@ fn command_init(args: InitArgs) -> Result<()> {
             .if_match
             .as_deref()
             .ok_or_else(|| Error("replacing a manifest requires --if-match".into()))?;
-        check_manifest_etag(&loaded.etag, expected)?;
+        store::assert_manifest_etag(&loaded.etag, expected)?;
         Some(loaded.manifest)
     } else {
         None
@@ -653,16 +653,6 @@ fn print_access(loaded: &store::LoadedManifest, changed: bool, json_output: bool
     Ok(())
 }
 
-fn check_manifest_etag(actual: &str, expected: &str) -> Result<()> {
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(Error(format!(
-            "manifest etag conflict: expected {expected}, current {actual}"
-        )))
-    }
-}
-
 fn command_access(args: AccessArgs) -> Result<()> {
     match args.command {
         AccessCommand::List(args) => {
@@ -671,60 +661,25 @@ fn command_access(args: AccessArgs) -> Result<()> {
             print_access(&loaded, false, args.json)
         }
         AccessCommand::Grant(args) => {
-            if !store::valid_agent_id(&args.agent) {
-                return Err(Error(format!("invalid agent id: {:?}", args.agent)));
-            }
             let root = canonical_existing(&args.root)?;
-            let _lock = store::lock_store(&root)?;
-            let mut loaded = store::load_manifest(&root)?;
-            store::assert_writer(&loaded.manifest, &args.actor)?;
-            check_manifest_etag(&loaded.etag, &args.if_match)?;
             let desired = match args.role {
                 AccessRole::Writer => store::AccessRole::Writer,
                 AccessRole::Reader => store::AccessRole::Reader,
             };
-            if store::manifest_role(&loaded.manifest, &args.agent) == Some(desired) {
-                return print_access(&loaded, false, true);
-            }
-            if desired == store::AccessRole::Reader
-                && loaded.manifest.writers.len() == 1
-                && loaded.manifest.writers[0] == args.agent
-            {
-                return Err(Error("cannot downgrade the final writer".into()));
-            }
-            loaded.manifest.writers.retain(|agent| agent != &args.agent);
-            loaded.manifest.readers.retain(|agent| agent != &args.agent);
-            match desired {
-                store::AccessRole::Writer => loaded.manifest.writers.push(args.agent),
-                store::AccessRole::Reader => loaded.manifest.readers.push(args.agent),
-            }
-            loaded.manifest.writers.sort();
-            loaded.manifest.readers.sort();
-            store::touch_manifest(&mut loaded.manifest, &args.actor);
-            loaded.etag = store::write_manifest(&root, &loaded.manifest)?;
-            print_access(&loaded, true, true)
+            let mutation = store::set_manifest_role(
+                &root,
+                &args.agent,
+                Some(desired),
+                &args.actor,
+                &args.if_match,
+            )?;
+            print_access(&mutation.loaded, mutation.changed, true)
         }
         AccessCommand::Revoke(args) => {
-            if !store::valid_agent_id(&args.agent) {
-                return Err(Error(format!("invalid agent id: {:?}", args.agent)));
-            }
             let root = canonical_existing(&args.root)?;
-            let _lock = store::lock_store(&root)?;
-            let mut loaded = store::load_manifest(&root)?;
-            store::assert_writer(&loaded.manifest, &args.actor)?;
-            check_manifest_etag(&loaded.etag, &args.if_match)?;
-            let current = store::manifest_role(&loaded.manifest, &args.agent);
-            if current.is_none() {
-                return print_access(&loaded, false, true);
-            }
-            if current == Some(store::AccessRole::Writer) && loaded.manifest.writers.len() == 1 {
-                return Err(Error("cannot revoke the final writer".into()));
-            }
-            loaded.manifest.writers.retain(|agent| agent != &args.agent);
-            loaded.manifest.readers.retain(|agent| agent != &args.agent);
-            store::touch_manifest(&mut loaded.manifest, &args.actor);
-            loaded.etag = store::write_manifest(&root, &loaded.manifest)?;
-            print_access(&loaded, true, true)
+            let mutation =
+                store::set_manifest_role(&root, &args.agent, None, &args.actor, &args.if_match)?;
+            print_access(&mutation.loaded, mutation.changed, true)
         }
     }
 }

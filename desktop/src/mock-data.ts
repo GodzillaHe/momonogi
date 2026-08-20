@@ -12,6 +12,7 @@ export const mockAgentDiscovery: AgentDiscoveryPayload = {
   storeRoot: "~/.local/share/momonogi/store",
   storeAvailable: true,
   storeRevision: 24,
+  storeEtag: "browser-etag-24",
 };
 
 export const mockMemories: MemorySummary[] = [

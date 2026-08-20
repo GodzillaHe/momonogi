@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AgentLogo } from "./AgentLogo";
-import { getAgentDiscovery, getBootstrap } from "./bridge";
+import { getAgentDiscovery, getBootstrap, setAgentAccess } from "./bridge";
 import markUrl from "./assets/momonogi-mark.svg";
 import { mockMemories, mockTags } from "./mock-data";
 import type { AgentDiscoveryPayload, AgentRole, AgentSummary, BootstrapPayload, ManagedHookState, ViewId } from "./types";
@@ -194,8 +194,69 @@ function StoreInspector({ discovery }: { discovery: AgentDiscoveryPayload | null
   );
 }
 
-function AgentsView({ query, discovery, loading, error }: { query: string; discovery: AgentDiscoveryPayload | null; loading: boolean; error: string | null }) {
+const roles: Array<{ value: AgentRole; label: string }> = [
+  { value: "writer", label: "Writer" },
+  { value: "reader", label: "Reader" },
+  { value: "none", label: "None" },
+];
+
+function RoleSelector({
+  agent,
+  disabled,
+  finalWriter,
+  onChange,
+}: {
+  agent: AgentSummary;
+  disabled: boolean;
+  finalWriter: boolean;
+  onChange: (role: AgentRole) => void;
+}) {
+  return (
+    <div className="role-selector" role="group" aria-label={`${agent.name} access`}>
+      {roles.map((role) => {
+        const protectedRole = finalWriter && agent.role === "writer" && role.value !== "writer";
+        return (
+          <button
+            key={role.value}
+            type="button"
+            aria-label={`${agent.name}: ${role.label}`}
+            aria-pressed={agent.role === role.value}
+            disabled={disabled || protectedRole}
+            title={protectedRole ? "At least one writer is required" : `${role.label} access`}
+            onClick={() => onChange(role.value)}
+          >
+            {role.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+interface AccessNotice {
+  state: "ok" | "error" | "warning";
+  text: string;
+}
+
+function AgentsView({
+  query,
+  discovery,
+  loading,
+  error,
+  accessNotice,
+  savingAgentId,
+  onSetAccess,
+}: {
+  query: string;
+  discovery: AgentDiscoveryPayload | null;
+  loading: boolean;
+  error: string | null;
+  accessNotice: AccessNotice | null;
+  savingAgentId: string | null;
+  onSetAccess: (agentId: string, role: AgentRole, actor: string) => void;
+}) {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [actor, setActor] = useState("");
   const allAgents = discovery?.agents ?? [];
   const agents = allAgents.filter((agent) =>
     `${agent.name} ${agent.id} ${agent.command}`.toLowerCase().includes(query.toLowerCase()),
@@ -205,6 +266,12 @@ function AgentsView({ query, discovery, loading, error }: { query: string; disco
   const installed = allAgents.filter((agent) => agent.installed).length;
   const selectedAgent = allAgents.find((agent) => agent.id === selectedAgentId);
 
+  useEffect(() => {
+    if (actor && !allAgents.some((agent) => agent.id === actor && agent.role === "writer")) {
+      setActor("");
+    }
+  }, [actor, allAgents]);
+
   return (
     <section className="view agents-view" aria-labelledby="agents-heading">
       <div className="section-heading">
@@ -212,11 +279,24 @@ function AgentsView({ query, discovery, loading, error }: { query: string; disco
           <h2 id="agents-heading">Access matrix</h2>
           <p>Roles in the active store manifest</p>
         </div>
-        <button className="text-button" type="button">
-          Configure
-          <ChevronRight aria-hidden="true" size={16} />
-        </button>
+        <label className="actor-picker">
+          <ShieldCheck aria-hidden="true" size={15} />
+          <span>Writer identity</span>
+          <select aria-label="Writer identity" value={actor} onChange={(event) => setActor(event.target.value)}>
+            <option value="">Choose writer</option>
+            {allAgents.filter((agent) => agent.role === "writer").map((agent) => (
+              <option key={agent.id} value={agent.id}>{agent.name}</option>
+            ))}
+          </select>
+        </label>
       </div>
+
+      {(accessNotice || error) && (
+        <div className="access-notice" data-state={accessNotice?.state ?? "error"} role={accessNotice?.state === "error" || error ? "alert" : "status"}>
+          {accessNotice?.state === "ok" ? <Check aria-hidden="true" size={15} /> : <CircleAlert aria-hidden="true" size={15} />}
+          <span>{accessNotice?.text ?? error}</span>
+        </div>
+      )}
 
       <div className="metric-strip" aria-label="Agent summary">
         <div><strong>{allAgents.length}</strong><span>Detected</span></div>
@@ -252,7 +332,12 @@ function AgentsView({ query, discovery, loading, error }: { query: string; disco
                   </span>
                 )}
               </div>
-              <span className="role-badge" data-role={agent.role}>{roleLabel(agent.role)}</span>
+              <RoleSelector
+                agent={agent}
+                disabled={!actor || !discovery?.storeEtag || Boolean(savingAgentId)}
+                finalWriter={writers === 1}
+                onChange={(role) => onSetAccess(agent.id, role, actor)}
+              />
               <button className="icon-button" type="button" aria-label={`Open ${agent.name}`} title={`Open ${agent.name}`} onClick={() => setSelectedAgentId(agent.id)}>
                 <ChevronRight aria-hidden="true" size={17} />
               </button>
@@ -385,6 +470,8 @@ export function App() {
   const [agentDiscovery, setAgentDiscovery] = useState<AgentDiscoveryPayload | null>(null);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [savingAgentId, setSavingAgentId] = useState<string | null>(null);
+  const [accessNotice, setAccessNotice] = useState<AccessNotice | null>(null);
 
   const refreshData = useCallback(async () => {
     setRefreshing(true);
@@ -403,12 +490,50 @@ export function App() {
     void refreshData();
   }, [refreshData]);
 
+  const updateAccess = useCallback(async (agentId: string, role: AgentRole, actor: string) => {
+    const ifMatch = agentDiscovery?.storeEtag;
+    if (!ifMatch) {
+      setAccessNotice({ state: "error", text: "The active store has no writable manifest." });
+      return;
+    }
+    setSavingAgentId(agentId);
+    setAccessNotice(null);
+    try {
+      const result = await setAgentAccess({ agentId, role, actor, ifMatch });
+      await refreshData();
+      setAccessNotice({
+        state: "ok",
+        text: result.changed ? `Access updated at revision ${result.revision}.` : "Access was already current.",
+      });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (message.includes("etag conflict")) {
+        await refreshData();
+        setAccessNotice({ state: "warning", text: "The store changed elsewhere. Current roles were reloaded." });
+      } else {
+        setAccessNotice({ state: "error", text: message });
+      }
+    } finally {
+      setSavingAgentId(null);
+    }
+  }, [agentDiscovery?.storeEtag, refreshData]);
+
   const content = useMemo(() => {
-    if (active === "agents") return <AgentsView query={query} discovery={agentDiscovery} loading={refreshing && !agentDiscovery} error={discoveryError} />;
+    if (active === "agents") return (
+      <AgentsView
+        query={query}
+        discovery={agentDiscovery}
+        loading={refreshing && !agentDiscovery}
+        error={discoveryError}
+        accessNotice={accessNotice}
+        savingAgentId={savingAgentId}
+        onSetAccess={(agentId, role, actor) => void updateAccess(agentId, role, actor)}
+      />
+    );
     if (active === "memories") return <MemoriesView query={query} />;
     if (active === "tags") return <TagsView query={query} />;
     return <SettingsView bootstrap={bootstrap} />;
-  }, [active, agentDiscovery, bootstrap, discoveryError, query, refreshing]);
+  }, [accessNotice, active, agentDiscovery, bootstrap, discoveryError, query, refreshing, savingAgentId, updateAccess]);
 
   function changeView(view: ViewId) {
     setActive(view);

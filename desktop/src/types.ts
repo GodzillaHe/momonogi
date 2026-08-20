@@ -26,7 +26,23 @@ export interface AgentDiscoveryPayload {
   storeRoot: string;
   storeAvailable: boolean;
   storeRevision?: number;
+  storeEtag?: string;
   storeIssue?: string;
+}
+
+export interface AccessUpdatePayload {
+  changed: boolean;
+  etag: string;
+  revision: number;
+  writers: string[];
+  readers: string[];
+}
+
+export interface AccessUpdateInput {
+  agentId: string;
+  role: AgentRole;
+  actor: string;
+  ifMatch: string;
 }
 
 export interface MemorySummary {
