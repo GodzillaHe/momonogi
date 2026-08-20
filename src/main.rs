@@ -31,6 +31,7 @@ enum Command {
     List(ListArgs),
     Put(PutArgs),
     Archive(ArchiveArgs),
+    Access(AccessArgs),
     Reindex(WriterRoot),
     Doctor(Root),
     Logo,
@@ -61,6 +62,10 @@ struct InitArgs {
     reader: Vec<String>,
     #[arg(long)]
     force: bool,
+    #[arg(long = "by", requires = "force")]
+    actor: Option<String>,
+    #[arg(long, requires = "force")]
+    if_match: Option<String>,
 }
 
 #[derive(Args)]
@@ -139,6 +144,56 @@ struct ArchiveArgs {
 }
 
 #[derive(Args)]
+struct AccessArgs {
+    #[command(subcommand)]
+    command: AccessCommand,
+}
+
+#[derive(Subcommand)]
+enum AccessCommand {
+    List(AccessListArgs),
+    #[command(alias = "set")]
+    Grant(AccessGrantArgs),
+    Revoke(AccessRevokeArgs),
+}
+
+#[derive(Args)]
+struct AccessListArgs {
+    #[arg(default_value = store::DEFAULT_GLOBAL_ROOT)]
+    root: PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum AccessRole {
+    Writer,
+    Reader,
+}
+
+#[derive(Args)]
+struct AccessGrantArgs {
+    root: PathBuf,
+    agent: String,
+    #[arg(long, value_enum)]
+    role: AccessRole,
+    #[arg(long = "by")]
+    actor: String,
+    #[arg(long)]
+    if_match: String,
+}
+
+#[derive(Args)]
+struct AccessRevokeArgs {
+    root: PathBuf,
+    agent: String,
+    #[arg(long = "by")]
+    actor: String,
+    #[arg(long)]
+    if_match: String,
+}
+
+#[derive(Args)]
 struct ConfigureArgs {
     #[arg(long, value_enum, required = true)]
     host: Vec<configure::Host>,
@@ -193,20 +248,45 @@ fn command_init(args: InitArgs) -> Result<()> {
     fs::create_dir_all(&root)?;
     let root = root.canonicalize()?;
     let _lock = store::lock_store(&root)?;
-    if root.join(store::MANIFEST).exists() && !args.force {
+    let existing = root.join(store::MANIFEST).exists();
+    if existing && !args.force {
         return Err(Error(
             "manifest already exists (use --force to replace it)".into(),
         ));
     }
-    let manifest = store::Manifest {
+    let previous = if existing {
+        let loaded = store::load_manifest(&root)?;
+        let actor = args
+            .actor
+            .as_deref()
+            .ok_or_else(|| Error("replacing a manifest requires --by".into()))?;
+        store::assert_writer(&loaded.manifest, actor)?;
+        let expected = args
+            .if_match
+            .as_deref()
+            .ok_or_else(|| Error("replacing a manifest requires --if-match".into()))?;
+        check_manifest_etag(&loaded.etag, expected)?;
+        Some(loaded.manifest)
+    } else {
+        None
+    };
+    let mut manifest = store::Manifest {
         schema_version: store::SCHEMA_VERSION,
         store_id: args.store_id,
+        revision: 1,
         writers: store::unique_sorted(&args.writer),
         readers: store::unique_sorted(&args.reader),
+        updated_by: None,
+        updated_at: None,
     };
-    let mut text = serde_json::to_string_pretty(&manifest)?;
-    text.push('\n');
-    store::atomic_write(&root.join(store::MANIFEST), text.as_bytes(), 0o600)?;
+    if let Some(previous) = previous {
+        manifest.revision = previous.revision;
+        store::touch_manifest(
+            &mut manifest,
+            args.actor.as_deref().expect("validated replacement actor"),
+        );
+    }
+    store::write_manifest(&root, &manifest)?;
     let (lines, bytes, _) = store::write_index(&root, &store::notes(&root)?)?;
     println!(
         "[momo] initialized {}: {lines} lines / {bytes} bytes",
@@ -229,12 +309,13 @@ fn command_migrate(args: MigrateArgs) -> Result<()> {
         let manifest = store::Manifest {
             schema_version: store::SCHEMA_VERSION,
             store_id: args.store_id,
+            revision: 1,
             writers: store::unique_sorted(&args.writer),
             readers: store::unique_sorted(&args.reader),
+            updated_by: None,
+            updated_at: None,
         };
-        let mut text = serde_json::to_string_pretty(&manifest)?;
-        text.push('\n');
-        store::atomic_write(&root.join(store::MANIFEST), text.as_bytes(), 0o600)?;
+        store::write_manifest(&root, &manifest)?;
     }
     store::assert_writer(&store::read_manifest(&root)?, &args.agent)?;
     let mut notes = store::notes(&root)?;
@@ -552,10 +633,111 @@ fn command_archive(args: ArchiveArgs) -> Result<()> {
     Ok(())
 }
 
+fn print_access(loaded: &store::LoadedManifest, changed: bool, json_output: bool) -> Result<()> {
+    let payload = json!({
+        "changed": changed,
+        "etag": loaded.etag,
+        "readers": loaded.manifest.readers,
+        "revision": loaded.manifest.revision,
+        "store_id": loaded.manifest.store_id,
+        "updated_at": loaded.manifest.updated_at,
+        "updated_by": loaded.manifest.updated_by,
+        "writers": loaded.manifest.writers,
+    });
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!(
+            "[momo] access revision={} etag={} store={}",
+            loaded.manifest.revision, loaded.etag, loaded.manifest.store_id
+        );
+        println!("writers: {}", loaded.manifest.writers.join(", "));
+        println!("readers: {}", loaded.manifest.readers.join(", "));
+    }
+    Ok(())
+}
+
+fn check_manifest_etag(actual: &str, expected: &str) -> Result<()> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(Error(format!(
+            "manifest etag conflict: expected {expected}, current {actual}"
+        )))
+    }
+}
+
+fn command_access(args: AccessArgs) -> Result<()> {
+    match args.command {
+        AccessCommand::List(args) => {
+            let root = canonical_existing(&args.root)?;
+            let loaded = store::load_manifest(&root)?;
+            print_access(&loaded, false, args.json)
+        }
+        AccessCommand::Grant(args) => {
+            if !store::valid_agent_id(&args.agent) {
+                return Err(Error(format!("invalid agent id: {:?}", args.agent)));
+            }
+            let root = canonical_existing(&args.root)?;
+            let _lock = store::lock_store(&root)?;
+            let mut loaded = store::load_manifest(&root)?;
+            store::assert_writer(&loaded.manifest, &args.actor)?;
+            check_manifest_etag(&loaded.etag, &args.if_match)?;
+            let desired = match args.role {
+                AccessRole::Writer => store::AccessRole::Writer,
+                AccessRole::Reader => store::AccessRole::Reader,
+            };
+            if store::manifest_role(&loaded.manifest, &args.agent) == Some(desired) {
+                return print_access(&loaded, false, true);
+            }
+            if desired == store::AccessRole::Reader
+                && loaded.manifest.writers.len() == 1
+                && loaded.manifest.writers[0] == args.agent
+            {
+                return Err(Error("cannot downgrade the final writer".into()));
+            }
+            loaded.manifest.writers.retain(|agent| agent != &args.agent);
+            loaded.manifest.readers.retain(|agent| agent != &args.agent);
+            match desired {
+                store::AccessRole::Writer => loaded.manifest.writers.push(args.agent),
+                store::AccessRole::Reader => loaded.manifest.readers.push(args.agent),
+            }
+            loaded.manifest.writers.sort();
+            loaded.manifest.readers.sort();
+            store::touch_manifest(&mut loaded.manifest, &args.actor);
+            loaded.etag = store::write_manifest(&root, &loaded.manifest)?;
+            print_access(&loaded, true, true)
+        }
+        AccessCommand::Revoke(args) => {
+            if !store::valid_agent_id(&args.agent) {
+                return Err(Error(format!("invalid agent id: {:?}", args.agent)));
+            }
+            let root = canonical_existing(&args.root)?;
+            let _lock = store::lock_store(&root)?;
+            let mut loaded = store::load_manifest(&root)?;
+            store::assert_writer(&loaded.manifest, &args.actor)?;
+            check_manifest_etag(&loaded.etag, &args.if_match)?;
+            let current = store::manifest_role(&loaded.manifest, &args.agent);
+            if current.is_none() {
+                return print_access(&loaded, false, true);
+            }
+            if current == Some(store::AccessRole::Writer) && loaded.manifest.writers.len() == 1 {
+                return Err(Error("cannot revoke the final writer".into()));
+            }
+            loaded.manifest.writers.retain(|agent| agent != &args.agent);
+            loaded.manifest.readers.retain(|agent| agent != &args.agent);
+            store::touch_manifest(&mut loaded.manifest, &args.actor);
+            loaded.etag = store::write_manifest(&root, &loaded.manifest)?;
+            print_access(&loaded, true, true)
+        }
+    }
+}
+
 fn command_reindex(args: WriterRoot) -> Result<()> {
     let root = canonical_existing(&args.root)?;
     store::assert_writer(&store::read_manifest(&root)?, &args.agent)?;
     let _lock = store::lock_store(&root)?;
+    store::assert_writer(&store::read_manifest(&root)?, &args.agent)?;
     let (lines, bytes, changed) = store::write_index(&root, &store::notes(&root)?)?;
     println!("[momo] reindexed changed={changed}; {lines} lines / {bytes} bytes");
     Ok(())
@@ -600,6 +782,7 @@ fn run(command: Command) -> Result<()> {
         Command::List(args) => command_list(args),
         Command::Put(args) => command_put(args),
         Command::Archive(args) => command_archive(args),
+        Command::Access(args) => command_access(args),
         Command::Reindex(args) => command_reindex(args),
         Command::Doctor(args) => command_doctor(args),
         Command::Logo => {
@@ -612,7 +795,11 @@ fn run(command: Command) -> Result<()> {
                     .host
                     .iter()
                     .any(|host| matches!(host, configure::Host::Codex))
-                && args.codex_project.is_empty();
+                && args.codex_project.is_empty()
+                && store::manifest_role(
+                    &store::read_manifest(&canonical_existing(&args.memory_root)?)?,
+                    configure::Host::Codex.agent_id(),
+                ) == Some(store::AccessRole::Writer);
             for path in configure::apply(
                 &args.host,
                 &args.openclaw_workspace,

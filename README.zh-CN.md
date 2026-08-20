@@ -3,8 +3,8 @@
 Momonogi 是一个供多个 AI Agent 共用的本地文件式记忆系统，发布为单个 Rust
 二进制，CLI 名为 `momo`。
 
-- Codex 与 Claude Code 是平权写入者。
-- OpenCode 与 OpenClaw 是只读使用者。
+- 每个记忆库都可以自由配置 Agent 角色。默认情况下，Codex 与 Claude Code 是
+  平权写入者，OpenCode 与 OpenClaw 是只读使用者。
 - Markdown 记忆可直接查看、迁移和备份。
 - 内核文件锁串行化写入，ETag 阻止旧版本覆盖新修改。
 - `MEMORY.md` 只保存短索引，Agent 按需打开相关详情。
@@ -38,6 +38,27 @@ momo migrate ~/.local/share/momonogi/store --agent codex
 
 迁移不会修改记忆正文，只会补齐缺少的多写入者元数据并重新生成索引。
 
+## 管理权限
+
+先查看当前角色和权限清单 ETag：
+
+```sh
+momo access list ~/.local/share/momonogi/store --json
+```
+
+当前任意 writer 都可以授予、更改或撤销 Agent 角色。修改必须携带最新的清单
+ETag，避免两个 writer 静默覆盖彼此的权限调整：
+
+```sh
+momo access grant ROOT opencode --role writer --by codex --if-match ETAG
+momo access set ROOT openclaw --role reader --by codex --if-match ETAG
+momo access revoke ROOT openclaw --by codex --if-match ETAG
+```
+
+`set` 是 `grant` 的别名。Momonogi 会拒绝非 writer 操作、过期 ETag、非法或重复的
+Agent ID，以及导致记忆库没有 writer 的修改。重复设置相同角色不会改变 revision
+或 ETag。
+
 ## 配置 Agent
 
 ```sh
@@ -53,6 +74,10 @@ momo configure \
 `configure` 只管理宿主规则文件中的 Momonogi 标记块。Claude Hook 全局写入
 `~/.claude/settings.json`；Codex Hook 是项目级配置，因此每个需要 Hook 的仓库都要传
 `--codex-project`。`--no-hooks` 可以只安装规则。其他规则和 Hook 处理器会被保留。
+
+`configure` 会读取权限清单，不再假设宿主角色固定。writer 获得写入规则和受管理的
+生命周期 Hook；reader 获得只读规则，同时移除 Momonogi 自己的 Hook；不在清单中的
+Agent 获得 no-access 规则。权限修改后需要为受影响的宿主重新运行 `configure`。
 
 OpenClaw 工作区规则会按当前宿主生效，避免共享的项目级 `AGENTS.md` 把 Codex 从
 写入者错误降级为只读者。
@@ -70,6 +95,9 @@ OpenClaw 工作区规则会按当前宿主生效，避免共享的项目级 `AGE
 | `momo put ROOT FILE --agent ID` | 新增记忆 |
 | `momo put ... --if-match ETAG` | 在不覆盖并发修改的前提下更新 |
 | `momo archive ROOT SLUG.md --agent ID --if-match ETAG` | 归档记忆 |
+| `momo access list [ROOT] [--json]` | 查看角色、清单 revision 和 ETag |
+| `momo access grant ROOT ID --role ROLE --by WRITER --if-match ETAG` | 授予或调整角色，`set` 是别名 |
+| `momo access revoke ROOT ID --by WRITER --if-match ETAG` | 从清单移除 Agent |
 | `momo reindex ROOT --agent ID` | 重新生成 `MEMORY.md` |
 | `momo doctor ROOT` | 检查清单、记忆、索引与大小限制 |
 | `momo configure ...` | 安装 Agent 规则与生命周期 Hook |
@@ -114,7 +142,7 @@ momo put ~/.local/share/momonogi/store /tmp/concise-updates.md --agent codex
 
 ## 部署到另一台电脑
 
-1. 克隆 Azusa，用 Cargo 安装 Rust 二进制。
+1. 克隆 Momonogi 仓库，用 Cargo 安装 Rust 二进制。
 2. 单独复制或安全同步记忆库。记忆可能含有个人信息，不应提交到公开仓库。
 3. 配置前先运行 `momo doctor ROOT`。
 4. 根据另一台电脑上的 Agent 运行 `momo configure`。

@@ -17,6 +17,26 @@ pub enum Host {
     Openclaw,
 }
 
+impl Host {
+    pub fn agent_id(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude-code",
+            Self::Opencode => "opencode",
+            Self::Openclaw => "openclaw",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::Claude => "Claude Code",
+            Self::Opencode => "OpenCode",
+            Self::Openclaw => "OpenClaw",
+        }
+    }
+}
+
 fn managed(existing: &str, block: &str) -> Result<String> {
     let rendered = format!("{BEGIN}\n{}\n{END}", block.trim());
     let begins: Vec<_> = existing.match_indices(BEGIN).collect();
@@ -72,18 +92,47 @@ Canonical global store: `{memory}`. `{label}` is a read-only consumer.\n\n\
     )
 }
 
-fn openclaw_block(memory: &Path) -> String {
+fn no_access_block(memory: &Path, label: &str) -> String {
     format!(
-        "## Shared Memory - Momonogi (Host Conditional)\n\n\
-This workspace may also be opened by Codex or another agent host.\n\
-- If the current host is not OpenClaw, this block does not change its Momonogi role; follow that host's global rules.\n\
-- If the current host is OpenClaw, it is a read-only Momonogi consumer. Continue using OpenClaw's native memory as primary and use the shared store only as supplementary context.\n\n\
+        "## Shared Memory - Momonogi (No Access)\n\n\
+Canonical global store: `{memory}`. `{label}` is not granted access.\n\n\
+- Do not read, create, edit, move, archive, reindex, migrate, or delete anything in this shared store.\n\
+- Ask a current Momonogi writer to grant a role, then rerun `momo configure` for this host.",
+        memory = memory.display(),
+    )
+}
+
+fn openclaw_block(memory: &Path, role: Option<store::AccessRole>) -> String {
+    let policy = match role {
+        Some(store::AccessRole::Writer) => format!(
+            "- If the current host is OpenClaw, it is an equal trusted writer with agent id `openclaw`. Continue using OpenClaw's native memory as primary.\n\n\
+For OpenClaw, the canonical shared store is `{memory}`. Index: `{memory}/MEMORY.md`.\n\n\
+- Read the index only when continuity or durable preferences are relevant, then open only relevant detail notes. Project `.momonogi` overrides global memory.\n\
+- Never edit canonical notes or `MEMORY.md` directly; write only through `momo` with `--agent openclaw`.\n\
+- Use ETags for updates and archives, and run `momo doctor {memory}` after meaningful maintenance.\n\
+- Save only durable preferences, reusable feedback, project continuity, and reference pointers. Never save secrets or facts already authoritative elsewhere.",
+            memory = memory.display(),
+        ),
+        Some(store::AccessRole::Reader) => format!(
+            "- If the current host is OpenClaw, it is a read-only Momonogi consumer. Continue using OpenClaw's native memory as primary and use the shared store only as supplementary context.\n\n\
 For OpenClaw, the canonical shared store is `{memory}`.\n\n\
 - Read `MEMORY.md` only when continuity or durable preferences are relevant, then open only relevant detail notes.\n\
 - Project `.momonogi` overrides global memory when present.\n\
 - Never create, edit, move, archive, reindex, migrate, or delete anything in this shared store.\n\
 - Treat recalled state as advisory and re-verify live facts. Never copy shared memories into OpenClaw's native memory.",
-        memory = memory.display(),
+            memory = memory.display(),
+        ),
+        None => format!(
+            "- If the current host is OpenClaw, it is not granted access to the shared Momonogi store. Continue using OpenClaw's native memory only.\n\n\
+For OpenClaw, the canonical shared store is `{memory}`. Do not read, create, edit, move, archive, reindex, migrate, or delete anything in it. Ask a current writer to grant access, then rerun `momo configure --host openclaw`.",
+            memory = memory.display(),
+        ),
+    };
+    format!(
+        "## Shared Memory - Momonogi (Host Conditional)\n\n\
+This workspace may also be opened by Codex or another agent host.\n\
+- If the current host is not OpenClaw, this block does not change its Momonogi role; follow that host's global rules.\n\
+{policy}",
     )
 }
 
@@ -240,6 +289,76 @@ fn merge_hooks(path: &Path, memory: &Path, mode: &str) -> Result<()> {
     store::atomic_write(path, rendered.as_bytes(), 0o600)
 }
 
+fn remove_hooks(path: &Path) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let mut root = hook_config(path)?;
+    let mut changed = false;
+    let mut remove_hooks_key = false;
+    if let Some(value) = root.get_mut("hooks") {
+        let hooks = value
+            .as_object_mut()
+            .ok_or_else(|| Error(format!("hooks must be an object: {}", path.display())))?;
+        let mut empty_managed_events = Vec::new();
+        for event in EVENTS {
+            let Some(value) = hooks.get_mut(event) else {
+                continue;
+            };
+            let groups = value.as_array_mut().ok_or_else(|| {
+                Error(format!(
+                    "hooks.{event} must be an array: {}",
+                    path.display()
+                ))
+            })?;
+            let managed = status(event);
+            let mut event_changed = false;
+            for group in groups.iter_mut() {
+                let handlers = group
+                    .get_mut("hooks")
+                    .and_then(Value::as_array_mut)
+                    .ok_or_else(|| {
+                        Error(format!(
+                            "hooks.{event} entries must contain a hooks array: {}",
+                            path.display()
+                        ))
+                    })?;
+                let before = handlers.len();
+                handlers.retain(|handler| {
+                    handler.get("statusMessage").and_then(Value::as_str) != Some(&managed)
+                });
+                event_changed |= handlers.len() != before;
+            }
+            let before = groups.len();
+            groups.retain(|group| {
+                group
+                    .get("hooks")
+                    .and_then(Value::as_array)
+                    .is_some_and(|handlers| !handlers.is_empty())
+            });
+            event_changed |= groups.len() != before;
+            changed |= event_changed;
+            if event_changed && groups.is_empty() {
+                empty_managed_events.push(event);
+            }
+        }
+        for event in empty_managed_events {
+            hooks.remove(event);
+        }
+        remove_hooks_key = changed && hooks.is_empty();
+    }
+    if remove_hooks_key {
+        root.remove("hooks");
+    }
+    if changed {
+        refuse_symlink(path)?;
+        let mut rendered = serde_json::to_string_pretty(&Value::Object(root))?;
+        rendered.push('\n');
+        store::atomic_write(path, rendered.as_bytes(), 0o600)?;
+    }
+    Ok(changed)
+}
+
 pub fn apply(
     hosts: &[Host],
     workspaces: &[PathBuf],
@@ -249,7 +368,13 @@ pub fn apply(
     install_hooks: bool,
 ) -> Result<Vec<PathBuf>> {
     let memory = store::expand_path(memory_root);
-    let memory = memory.canonicalize().unwrap_or(memory);
+    let memory = memory.canonicalize().map_err(|error| {
+        Error(format!(
+            "invalid Momonogi store {}: {error}",
+            memory.display()
+        ))
+    })?;
+    let manifest = store::read_manifest(&memory)?;
     if install_hooks {
         for host in hosts {
             if matches!(host, Host::Claude) {
@@ -288,20 +413,27 @@ pub fn apply(
         for path in targets {
             refuse_symlink(&path)?;
             let existing = read_optional(&path)?;
-            let block = match host {
-                Host::Codex => writer_block(&memory, "codex"),
-                Host::Claude => writer_block(&memory, "claude-code"),
-                Host::Opencode => reader_block(&memory, "OpenCode"),
-                Host::Openclaw => openclaw_block(&memory),
+            let role = store::manifest_role(&manifest, host.agent_id());
+            let block = match (host, role) {
+                (Host::Openclaw, role) => openclaw_block(&memory, role),
+                (_, Some(store::AccessRole::Writer)) => writer_block(&memory, host.agent_id()),
+                (_, Some(store::AccessRole::Reader)) => reader_block(&memory, host.label()),
+                (_, None) => no_access_block(&memory, host.label()),
             };
             let rendered = managed(&existing, &block)?;
             store::atomic_write(&path, rendered.as_bytes(), 0o644)?;
             configured.push(path);
         }
+        let writer =
+            store::manifest_role(&manifest, host.agent_id()) == Some(store::AccessRole::Writer);
         if install_hooks && matches!(host, Host::Claude) {
             let path = home()?.join(".claude/settings.json");
-            merge_hooks(&path, &memory, hook_mode)?;
-            configured.push(path);
+            if writer {
+                merge_hooks(&path, &memory, hook_mode)?;
+                configured.push(path);
+            } else if remove_hooks(&path)? {
+                configured.push(path);
+            }
         }
         if install_hooks && matches!(host, Host::Codex) {
             for project in codex_projects {
@@ -314,8 +446,12 @@ pub fn apply(
                         ))
                     })?;
                 let path = project.join(".codex/hooks.json");
-                merge_hooks(&path, &memory, hook_mode)?;
-                configured.push(path);
+                if writer {
+                    merge_hooks(&path, &memory, hook_mode)?;
+                    configured.push(path);
+                } else if remove_hooks(&path)? {
+                    configured.push(path);
+                }
             }
         }
     }

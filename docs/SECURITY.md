@@ -13,6 +13,9 @@ Remove memory bodies, prompts, credentials, and personal paths from reports.
   stores; a malicious note can act as stored prompt injection.
 - Only agents listed as writers in `.momonogi.json` may mutate the store through
   `momo`. Reader labels are policy roles, not operating-system identities.
+- Access changes require a current writer ID and manifest ETag, are serialized
+  by the store lock, and cannot remove the final writer. `--by` and `--agent`
+  are trusted local identity claims, not cryptographic authentication.
 - Writes use an exclusive kernel lock, atomic file replacement, and ETag checks.
   These prevent accidental concurrent overwrites, not a malicious local process.
 - `MEMORY.md` is generated and capped at 200 lines or 25 KiB by default.
@@ -27,6 +30,10 @@ mean the host has enabled or trusted it.
 
 Hook state contains session identifiers and reconciliation flags, never prompt
 text or note bodies. Session state is bounded to 128 entries.
+
+After a role change, rerun `momo configure` for affected hosts. Configuration
+removes Momonogi-managed lifecycle hooks from readers and unlisted hosts while
+preserving unrelated handlers.
 
 ## Backups
 

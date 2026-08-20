@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{Local, SecondsFormat};
 use fs2::FileExt;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -49,9 +49,31 @@ impl From<serde_json::Error> for Error {
 pub struct Manifest {
     pub schema_version: u32,
     pub store_id: String,
+    #[serde(default = "default_manifest_revision")]
+    pub revision: u64,
     pub writers: Vec<String>,
     #[serde(default)]
     pub readers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccessRole {
+    Writer,
+    Reader,
+}
+
+#[derive(Clone, Debug)]
+pub struct LoadedManifest {
+    pub manifest: Manifest,
+    pub etag: String,
+}
+
+fn default_manifest_revision() -> u64 {
+    1
 }
 
 #[derive(Clone, Debug)]
@@ -333,7 +355,46 @@ pub fn validate(fields: &BTreeMap<String, String>, body: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn read_manifest(root: &Path) -> Result<Manifest> {
+pub fn valid_agent_id(agent: &str) -> bool {
+    let bytes = agent.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 64
+        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
+}
+
+pub fn validate_manifest(manifest: &Manifest) -> Result<()> {
+    if manifest.schema_version != SCHEMA_VERSION {
+        return Err(Error("unsupported manifest schema".into()));
+    }
+    if manifest.store_id.trim().is_empty() {
+        return Err(Error("manifest store_id cannot be empty".into()));
+    }
+    if manifest.revision == 0 {
+        return Err(Error("manifest revision must be at least 1".into()));
+    }
+    if manifest.writers.is_empty() {
+        return Err(Error("manifest must contain at least one writer".into()));
+    }
+    let mut seen = HashSet::new();
+    for agent in manifest.writers.iter().chain(&manifest.readers) {
+        if !valid_agent_id(agent) {
+            return Err(Error(format!(
+                "invalid agent id {agent:?}; use 1-64 lowercase letters, digits, '.', '_' or '-'"
+            )));
+        }
+        if !seen.insert(agent) {
+            return Err(Error(format!(
+                "agent {agent:?} appears more than once in the access manifest"
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub fn load_manifest(root: &Path) -> Result<LoadedManifest> {
     let path = root.join(MANIFEST);
     if !path.is_file() {
         return Err(Error(
@@ -343,10 +404,39 @@ pub fn read_manifest(root: &Path) -> Result<Manifest> {
     let data = fs::read(&path)?;
     let manifest: Manifest = serde_json::from_slice(&data)
         .map_err(|error| Error(format!("cannot read manifest: {error}")))?;
-    if manifest.schema_version != SCHEMA_VERSION {
-        return Err(Error("unsupported manifest schema".into()));
+    validate_manifest(&manifest)?;
+    Ok(LoadedManifest {
+        manifest,
+        etag: sha(&data),
+    })
+}
+
+pub fn read_manifest(root: &Path) -> Result<Manifest> {
+    Ok(load_manifest(root)?.manifest)
+}
+
+pub fn write_manifest(root: &Path, manifest: &Manifest) -> Result<String> {
+    validate_manifest(manifest)?;
+    let mut data = serde_json::to_vec_pretty(manifest)?;
+    data.push(b'\n');
+    atomic_write(&root.join(MANIFEST), &data, 0o600)?;
+    Ok(sha(&data))
+}
+
+pub fn manifest_role(manifest: &Manifest, agent: &str) -> Option<AccessRole> {
+    if manifest.writers.iter().any(|writer| writer == agent) {
+        Some(AccessRole::Writer)
+    } else if manifest.readers.iter().any(|reader| reader == agent) {
+        Some(AccessRole::Reader)
+    } else {
+        None
     }
-    Ok(manifest)
+}
+
+pub fn touch_manifest(manifest: &mut Manifest, actor: &str) {
+    manifest.revision += 1;
+    manifest.updated_by = Some(actor.to_owned());
+    manifest.updated_at = Some(Local::now().to_rfc3339_opts(SecondsFormat::Secs, true));
 }
 
 pub fn assert_writer(manifest: &Manifest, agent: &str) -> Result<()> {
