@@ -8,6 +8,38 @@ describe("Momonogi desktop shell", () => {
     resetBrowserBridgeForTests();
   });
 
+  it("supports keyboard-only navigation and skips disabled access controls", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent access" });
+
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Agents" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Memories" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("heading", { name: "Memory explorer" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Agents" }));
+    const writerIdentity = await screen.findByRole("combobox", { name: "Writer identity" });
+    writerIdentity.focus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Open Codex" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Codex: Writer" })).toBeDisabled();
+  });
+
+  it("does not present a hard-coded tag count in the toolbar", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent access" });
+
+    await user.click(screen.getByRole("button", { name: "Tags" }));
+
+    expect(await screen.findByRole("heading", { name: "Tag index" })).toBeInTheDocument();
+    expect(screen.getByText("All stores")).toBeInTheDocument();
+    expect(screen.queryByText("6 indexed")).not.toBeInTheDocument();
+  });
+
   it("shows the agent workbench and browser bridge status", async () => {
     render(<App />);
 

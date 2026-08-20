@@ -1,3 +1,5 @@
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench · theme: custom · tone: technical · anchor hue: peach-pink · nav: N3 · footer: Ft2 */
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 · contrast: pass (40–41) · mobile: pass (34, 49, 50–57) */
 * {
   box-sizing: border-box;
 }
@@ -30,6 +32,7 @@ select {
 }
 
 button {
+  line-height: 1;
   white-space: nowrap;
 }
 
@@ -248,7 +251,7 @@ code,
 }
 
 .toolbar__title h1 {
-  margin-block-start: 2px;
+  margin-block-start: var(--space-2xs);
   font-size: var(--text-title);
   font-weight: 600;
   line-height: 1.15;
@@ -443,7 +446,6 @@ main {
 }
 
 .metric-strip strong {
-  font-family: var(--font-data);
   font-size: var(--text-body);
   font-variant-numeric: tabular-nums;
 }
@@ -480,12 +482,11 @@ main {
 
 .configuration-preview__head span {
   color: var(--color-muted);
-  font-family: var(--font-data);
   font-size: var(--text-xs);
 }
 
 .configuration-preview__head h3 {
-  margin-block-start: 2px;
+  margin-block-start: var(--space-2xs);
   font-size: var(--text-ui);
   font-weight: 600;
 }
@@ -645,7 +646,7 @@ main {
 
 .agent-row code {
   display: block;
-  margin-block-start: 2px;
+  margin-block-start: var(--space-2xs);
   overflow: hidden;
   color: var(--color-muted);
   font-size: var(--text-xs);
@@ -685,7 +686,6 @@ main {
   border-radius: 0;
   background: transparent;
   color: var(--color-muted);
-  font-family: var(--font-data);
   font-size: var(--text-xs);
   text-overflow: ellipsis;
   cursor: pointer;
@@ -729,7 +729,6 @@ main {
   border-radius: var(--radius-xs);
   background: var(--color-paper-raised);
   color: var(--color-ink-secondary);
-  font-family: var(--font-data);
   font-size: var(--text-xs);
   white-space: nowrap;
 }
@@ -852,7 +851,6 @@ main {
 
 .config-issue svg {
   flex: 0 0 auto;
-  margin-block-start: 1px;
 }
 
 .secondary-button {
@@ -922,7 +920,6 @@ main {
   border-block-end: var(--rule-thin) solid var(--color-rule);
   background: var(--color-paper-sunken);
   color: var(--color-muted);
-  font-family: var(--font-data);
   font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1.5rem;
@@ -976,7 +973,6 @@ main {
 .memory-row__top time,
 .memory-row__meta {
   color: var(--color-muted);
-  font-family: var(--font-data);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
@@ -1028,7 +1024,7 @@ main {
 }
 
 .memory-detail > p {
-  max-width: 42rem;
+  max-width: 65ch;
   margin-block: var(--space-lg);
   color: var(--color-ink-secondary);
   line-height: 1.65;
@@ -1040,7 +1036,6 @@ main {
   gap: var(--space-xs);
   margin-block-start: var(--space-sm);
   color: var(--color-muted);
-  font-family: var(--font-data);
   font-size: var(--text-xs);
 }
 
@@ -1059,7 +1054,6 @@ main {
   border-radius: var(--radius-sm);
   background: var(--color-paper-sunken);
   color: var(--color-ink-secondary);
-  font-family: var(--font-data);
   font-size: var(--text-sm);
   line-height: 1.6;
   white-space: pre-wrap;
@@ -1126,7 +1120,6 @@ main {
   outline: 0;
   background: transparent;
   color: var(--color-ink-secondary);
-  font-family: var(--font-data);
   font-size: var(--text-xs);
 }
 
@@ -1147,13 +1140,7 @@ main {
   border-radius: var(--radius-xs);
   background: var(--color-paper-raised);
   color: var(--color-ink-secondary);
-  font-family: var(--font-data);
   font-size: var(--text-xs);
-}
-
-.tag-line button:not(:disabled):hover {
-  border-color: var(--color-rule-strong);
-  color: var(--color-ink);
 }
 
 .tag-line button svg {
@@ -1198,7 +1185,6 @@ main {
   outline: 0;
   background: transparent;
   color: var(--color-ink);
-  font-family: var(--font-data);
   font-size: var(--text-sm);
 }
 
@@ -1241,7 +1227,6 @@ main {
 .tag-table__row strong {
   min-width: 0;
   overflow: hidden;
-  font-family: var(--font-data);
   font-size: var(--text-ui);
   text-overflow: ellipsis;
 }
@@ -1296,7 +1281,6 @@ main {
   border: 0;
   outline: 0;
   background: transparent;
-  font-family: var(--font-data);
   font-size: var(--text-sm);
 }
 
@@ -1346,7 +1330,7 @@ main {
 
 .store-row__identity code {
   display: block;
-  margin-block-start: 2px;
+  margin-block-start: var(--space-2xs);
   overflow: hidden;
   color: var(--color-muted);
   font-size: var(--text-xs);
@@ -1425,7 +1409,7 @@ main {
   gap: var(--space-xs);
 }
 
-.status-line__version {
+.status-line .status-line__version {
   display: none;
   margin-inline-start: auto;
 }
@@ -1447,6 +1431,12 @@ main {
   .sync-button:not(:disabled):hover {
     background: var(--color-brand-mark);
   }
+
+  .role-selector button:not(:disabled):hover,
+  .tag-line button:not(:disabled):hover {
+    background: var(--color-paper-sunken);
+    color: var(--color-ink);
+  }
 }
 
 .nav-button:active,
@@ -1455,8 +1445,23 @@ main {
 .secondary-button:active,
 .sync-button:active,
 .memory-row:active,
-.search-field button:active {
+.search-field button:active,
+.role-selector button:active,
+.tag-line button:active {
   transform: translateY(1px);
+}
+
+@media (pointer: coarse) {
+  .actor-picker select,
+  .role-selector,
+  .memory-filters select,
+  .tag-actor-picker,
+  .tag-line button,
+  .tag-editor label,
+  .tag-editor .icon-button,
+  .sync-button {
+    min-height: 2.75rem;
+  }
 }
 
 @media (min-width: 40rem) {
@@ -1519,7 +1524,7 @@ main {
     border-inline-end: var(--rule-thin) solid var(--color-rule);
   }
 
-  .status-line__version {
+  .status-line .status-line__version {
     display: inline-flex;
   }
 
@@ -1625,6 +1630,14 @@ main {
 @keyframes detail-in {
   from { opacity: 0; transform: translateY(3px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes busy-spin {
+  to { transform: rotate(360deg); }
+}
+
+[aria-busy="true"] > svg {
+  animation: busy-spin var(--dur-detail) linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

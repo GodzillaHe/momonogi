@@ -7,6 +7,7 @@
 /desktop/node_modules/
 /desktop/dist/
 /desktop/*.tsbuildinfo
+/desktop/src-tauri/binaries/momo-*
 
 # OS / editor
 .DS_Store

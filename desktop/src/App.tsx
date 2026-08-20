@@ -25,6 +25,7 @@ import {
   getMemoryDetail,
   getMemoryIndex,
   getStoreRegistry,
+  openStoreFolder,
   changeMemoryTag,
   applyAgentConfiguration,
   previewAgentConfiguration,
@@ -45,7 +46,7 @@ const views: Array<{ id: ViewId; label: string; icon: typeof UserRoundCog }> = [
 const viewTitles: Record<ViewId, { title: string; context: string }> = {
   agents: { title: "Agent access", context: "Global store" },
   memories: { title: "Memory explorer", context: "All stores" },
-  tags: { title: "Tags", context: "6 indexed" },
+  tags: { title: "Tags", context: "All stores" },
   settings: { title: "Settings", context: "Local runtime" },
 };
 
@@ -150,6 +151,7 @@ function Toolbar({
         type="button"
         aria-label="Refresh"
         aria-busy={refreshing}
+        data-state={refreshing ? "loading" : undefined}
         title={refreshing ? "Refreshing" : "Refresh"}
         disabled={refreshing}
         onClick={onRefresh}
@@ -192,15 +194,21 @@ function AgentInspector({
         {agent.configPaths.length > 0 ? agent.configPaths.map((path) => <code key={path} title={path}>{path}</code>) : <p>No host adapter paths</p>}
       </div>
       {agent.configIssue && <p className="config-issue"><CircleAlert aria-hidden="true" size={14} />{agent.configIssue}</p>}
-      <button className="secondary-button" type="button" disabled={busy} onClick={onPreviewConfiguration}>
-        <FileCog aria-hidden="true" size={16} />
+      <button className="secondary-button" type="button" aria-busy={busy} data-state={busy ? "loading" : undefined} disabled={busy} onClick={onPreviewConfiguration}>
+        {busy ? <RefreshCw aria-hidden="true" size={16} /> : <FileCog aria-hidden="true" size={16} />}
         Preview configuration
       </button>
     </aside>
   );
 }
 
-function StoreInspector({ discovery }: { discovery: AgentDiscoveryPayload | null }) {
+function StoreInspector({
+  discovery,
+  onOpenFolder,
+}: {
+  discovery: AgentDiscoveryPayload | null;
+  onOpenFolder: (path: string) => void;
+}) {
   return (
     <aside className="store-inspector" aria-labelledby="active-store-heading">
       <div className="store-inspector__head">
@@ -215,7 +223,7 @@ function StoreInspector({ discovery }: { discovery: AgentDiscoveryPayload | null
         <div><dt>Root</dt><dd><code className="path-value" title={discovery?.storeRoot}>{discovery?.storeRoot ?? "loading"}</code></dd></div>
       </dl>
       {discovery?.storeIssue && <p className="config-issue"><CircleAlert aria-hidden="true" size={14} />{discovery.storeIssue}</p>}
-      <button className="secondary-button" type="button">
+      <button className="secondary-button" type="button" disabled={!discovery?.storeAvailable} onClick={() => discovery && onOpenFolder(discovery.storeRoot)}>
         <FolderOpen aria-hidden="true" size={16} />
         Open folder
       </button>
@@ -318,8 +326,8 @@ function ConfigurationPreview({
       </div>
       <div className="configuration-preview__actions">
         <span>{changed === 0 ? "Configuration is current" : `${changed} file${changed === 1 ? "" : "s"} will change`}</span>
-        <button className="sync-button" type="button" disabled={busy || changed === 0} onClick={onApply}>
-          <Check aria-hidden="true" size={16} />
+        <button className="sync-button" type="button" aria-busy={busy} data-state={busy ? "loading" : undefined} disabled={busy || changed === 0} onClick={onApply}>
+          {busy ? <RefreshCw aria-hidden="true" size={16} /> : <Check aria-hidden="true" size={16} />}
           Apply changes
         </button>
       </div>
@@ -341,6 +349,7 @@ function AgentsView({
   onPreviewConfiguration,
   onApplyConfiguration,
   onDismissConfiguration,
+  onOpenStoreFolder,
 }: {
   query: string;
   discovery: AgentDiscoveryPayload | null;
@@ -355,6 +364,7 @@ function AgentsView({
   onPreviewConfiguration: (agentId: string) => void;
   onApplyConfiguration: () => void;
   onDismissConfiguration: () => void;
+  onOpenStoreFolder: (path: string) => void;
 }) {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [actor, setActor] = useState("");
@@ -469,7 +479,7 @@ function AgentsView({
             onClose={() => setSelectedAgentId(null)}
             onPreviewConfiguration={() => onPreviewConfiguration(selectedAgent.id)}
           />
-        ) : <StoreInspector discovery={discovery} />}
+        ) : <StoreInspector discovery={discovery} onOpenFolder={onOpenStoreFolder} />}
       </div>
     </section>
   );
@@ -726,8 +736,8 @@ function MemoriesView({
                         onChange={(event) => setTagInput(event.target.value)}
                       />
                     </label>
-                    <button className="icon-button" type="submit" aria-label="Add tag" title="Add tag" disabled={tagBusy || !tagActor || !tagInput.trim()}>
-                      <Plus aria-hidden="true" size={16} />
+                    <button className="icon-button" type="submit" aria-label={tagBusy ? "Adding tag" : "Add tag"} aria-busy={tagBusy} data-state={tagBusy ? "loading" : undefined} title={tagBusy ? "Adding tag" : "Add tag"} disabled={tagBusy || !tagActor || !tagInput.trim()}>
+                      {tagBusy ? <RefreshCw aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
                     </button>
                   </form>
                 )}
@@ -854,7 +864,7 @@ function SettingsView({
             onChange={(event) => setProjectPath(event.target.value)}
           />
         </label>
-        <button className="secondary-button" type="submit" disabled={registryBusy || !projectPath.trim()}>
+        <button className="secondary-button" type="submit" aria-busy={registryBusy} data-state={registryBusy ? "loading" : undefined} disabled={registryBusy || !projectPath.trim()}>
           Register
         </button>
       </form>
@@ -1025,6 +1035,15 @@ export function App() {
     }
   }, [configurationPlan, refreshData]);
 
+  const revealStoreFolder = useCallback(async (path: string) => {
+    setDiscoveryError(null);
+    try {
+      await openStoreFolder(path);
+    } catch (cause) {
+      setDiscoveryError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+
   const addProjectStore = useCallback(async (path: string) => {
     setRegistryBusy(true);
     setRegistryError(null);
@@ -1069,6 +1088,7 @@ export function App() {
         onPreviewConfiguration={(agentId) => void loadConfigurationPreview(agentId)}
         onApplyConfiguration={() => void applyConfiguration()}
         onDismissConfiguration={() => { setConfigurationPlan(null); setConfigurationNotice(null); }}
+        onOpenStoreFolder={(path) => void revealStoreFolder(path)}
       />
     );
     if (active === "memories") return (
@@ -1091,7 +1111,7 @@ export function App() {
         onRemove={removeStore}
       />
     );
-  }, [accessNotice, active, addProjectStore, agentDiscovery, applyConfiguration, bootstrap, configurationBusy, configurationNotice, configurationPlan, discoveryError, loadConfigurationPreview, memoryError, memoryIndex, query, refreshing, registryBusy, registryError, removeStore, savingAgentId, stores, updateAccess]);
+  }, [accessNotice, active, addProjectStore, agentDiscovery, applyConfiguration, bootstrap, configurationBusy, configurationNotice, configurationPlan, discoveryError, loadConfigurationPreview, memoryError, memoryIndex, query, refreshing, registryBusy, registryError, removeStore, revealStoreFolder, savingAgentId, stores, updateAccess]);
 
   function changeView(view: ViewId) {
     setActive(view);

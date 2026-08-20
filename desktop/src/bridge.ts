@@ -54,6 +54,12 @@ export async function removeProjectStore(projectPath: string): Promise<StoreSumm
   return structuredClone(browserStores);
 }
 
+export async function openStoreFolder(storePath: string): Promise<void> {
+  if (isTauriRuntime()) {
+    await invoke("open_store_folder", { storePath });
+  }
+}
+
 export async function getMemoryIndex(): Promise<MemoryIndexPayload> {
   if (isTauriRuntime()) {
     return invoke<MemoryIndexPayload>("get_memory_index", {

@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "io.momonogi.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm prepare:sidecar && pnpm dev",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm prepare:sidecar && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -35,6 +35,7 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "externalBin": ["binaries/momo"]
   }
 }

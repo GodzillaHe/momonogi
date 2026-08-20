@@ -2,6 +2,7 @@ use momonogi::discovery::{AgentProbe, DiscoveredAgent, DiscoveryInput};
 use serde::Serialize;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::process::Command;
 use tauri::Manager;
 
 #[derive(Serialize)]
@@ -79,15 +80,33 @@ fn is_executable(path: &std::path::Path) -> bool {
     }
 }
 
-fn momo_executable(home: &std::path::Path, path: &std::ffi::OsStr) -> PathBuf {
-    let local = home.join(".local/bin/momo");
-    if is_executable(&local) {
+fn resolve_momo_executable(
+    home: &std::path::Path,
+    path: &std::ffi::OsStr,
+    current: Option<&std::path::Path>,
+    executable: impl Fn(&std::path::Path) -> bool,
+) -> PathBuf {
+    if let Some(current) = current {
+        if let Some(directory) = current.parent() {
+            let bundled = directory.join(format!("momo{}", std::env::consts::EXE_SUFFIX));
+            if executable(&bundled) {
+                return bundled;
+            }
+        }
+    }
+    let local = home.join(format!(".local/bin/momo{}", std::env::consts::EXE_SUFFIX));
+    if executable(&local) {
         return local;
     }
     std::env::split_paths(path)
-        .map(|directory| directory.join("momo"))
-        .find(|candidate| is_executable(candidate))
-        .unwrap_or_else(|| PathBuf::from("momo"))
+        .map(|directory| directory.join(format!("momo{}", std::env::consts::EXE_SUFFIX)))
+        .find(|candidate| executable(candidate))
+        .unwrap_or_else(|| PathBuf::from(format!("momo{}", std::env::consts::EXE_SUFFIX)))
+}
+
+fn momo_executable(home: &std::path::Path, path: &std::ffi::OsStr) -> PathBuf {
+    let current = std::env::current_exe().ok();
+    resolve_momo_executable(home, path, current.as_deref(), is_executable)
 }
 
 #[tauri::command]
@@ -147,14 +166,8 @@ fn set_agent_access(
     let root = momonogi::store::expand_path(momonogi::store::DEFAULT_GLOBAL_ROOT)
         .canonicalize()
         .map_err(|error| format!("cannot open global store: {error}"))?;
-    let mutation = momonogi::store::set_manifest_role(
-        &root,
-        &agent_id,
-        role,
-        &actor,
-        &if_match,
-    )
-    .map_err(|error| error.to_string())?;
+    let mutation = momonogi::store::set_manifest_role(&root, &agent_id, role, &actor, &if_match)
+        .map_err(|error| error.to_string())?;
     Ok(AccessUpdatePayload {
         changed: mutation.changed,
         etag: mutation.loaded.etag,
@@ -250,8 +263,12 @@ fn register_project_store(
 ) -> Result<Vec<momonogi::registry::StoreEntry>, String> {
     let registry = registry_path(&app)?;
     let global = momonogi::store::expand_path(momonogi::store::DEFAULT_GLOBAL_ROOT);
-    momonogi::registry::register_project_store(&registry, &global, PathBuf::from(project_path).as_path())
-        .map_err(|error| error.to_string())?;
+    momonogi::registry::register_project_store(
+        &registry,
+        &global,
+        PathBuf::from(project_path).as_path(),
+    )
+    .map_err(|error| error.to_string())?;
     momonogi::registry::inspect_registry(&registry, &global).map_err(|error| error.to_string())
 }
 
@@ -265,6 +282,32 @@ fn remove_project_store(
     momonogi::registry::remove_project_store(&registry, PathBuf::from(project_path).as_path())
         .map_err(|error| error.to_string())?;
     momonogi::registry::inspect_registry(&registry, &global).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_store_folder(app: tauri::AppHandle, store_path: String) -> Result<(), String> {
+    let requested = PathBuf::from(store_path);
+    let source = memory_sources(&app)?
+        .into_iter()
+        .find(|source| source.path == requested)
+        .ok_or_else(|| "memory store is not registered".to_owned())?;
+    let folder = source
+        .path
+        .canonicalize()
+        .map_err(|error| format!("cannot open memory store: {error}"))?;
+
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = Command::new("explorer");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = Command::new("xdg-open");
+
+    command
+        .arg(folder)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("cannot open memory store folder: {error}"))
 }
 
 fn memory_sources(app: &tauri::AppHandle) -> Result<Vec<momonogi::explorer::StoreSource>, String> {
@@ -314,15 +357,8 @@ fn change_memory_tag(
         .into_iter()
         .find(|source| source.path == requested)
         .ok_or_else(|| "memory store is not registered".to_owned())?;
-    momonogi::tag::change_tag(
-        &source.path,
-        &slug,
-        &tag,
-        action,
-        &actor,
-        &if_match,
-    )
-    .map_err(|error| error.to_string())
+    momonogi::tag::change_tag(&source.path, &slug, &tag, action, &actor, &if_match)
+        .map_err(|error| error.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -337,10 +373,60 @@ pub fn run() {
             get_store_registry,
             register_project_store,
             remove_project_store,
+            open_store_folder,
             get_memory_index,
             get_memory_detail,
             change_memory_tag
         ])
         .run(tauri::generate_context!())
         .expect("error while running Momonogi Desktop");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_momo_executable;
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn bundled_momo_precedes_local_and_path_copies() {
+        let home = Path::new("/home/momo");
+        let current = Path::new("/Applications/Momonogi.app/Contents/MacOS/momonogi-desktop");
+        let bundled = current
+            .parent()
+            .unwrap()
+            .join(format!("momo{}", std::env::consts::EXE_SUFFIX));
+        let local = home.join(format!(".local/bin/momo{}", std::env::consts::EXE_SUFFIX));
+        let path = std::env::join_paths([Path::new("/opt/bin")]).unwrap();
+
+        let selected = resolve_momo_executable(home, &path, Some(current), |candidate| {
+            candidate == bundled || candidate == local
+        });
+
+        assert_eq!(selected, bundled);
+    }
+
+    #[test]
+    fn path_copy_is_used_when_no_bundled_or_local_copy_exists() {
+        let home = Path::new("/home/momo");
+        let path_directory = Path::new("/opt/bin");
+        let path = std::env::join_paths([path_directory]).unwrap();
+        let expected = path_directory.join(format!("momo{}", std::env::consts::EXE_SUFFIX));
+
+        let selected =
+            resolve_momo_executable(home, &path, None, |candidate| candidate == expected);
+
+        assert_eq!(selected, expected);
+    }
+
+    #[test]
+    fn command_name_is_the_final_fallback() {
+        let selected =
+            resolve_momo_executable(Path::new("/home/momo"), &OsString::new(), None, |_| false);
+
+        assert_eq!(
+            selected,
+            PathBuf::from(format!("momo{}", std::env::consts::EXE_SUFFIX))
+        );
+    }
 }
