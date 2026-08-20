@@ -1,6 +1,8 @@
 use crate::store::{self, Error, Result};
 use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -9,7 +11,8 @@ const BEGIN: &str = "<!-- BEGIN MOMONOGI -->";
 const END: &str = "<!-- END MOMONOGI -->";
 const EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "PreCompact"];
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
 pub enum Host {
     Codex,
     Claude,
@@ -33,6 +36,16 @@ impl Host {
             Self::Claude => "Claude Code",
             Self::Opencode => "OpenCode",
             Self::Openclaw => "OpenClaw",
+        }
+    }
+
+    pub fn from_agent_id(agent_id: &str) -> Option<Self> {
+        match agent_id {
+            "codex" => Some(Self::Codex),
+            "claude-code" => Some(Self::Claude),
+            "opencode" => Some(Self::Opencode),
+            "openclaw" => Some(Self::Openclaw),
+            _ => None,
         }
     }
 }
@@ -61,8 +74,7 @@ fn managed(existing: &str, block: &str) -> Result<String> {
     ))
 }
 
-fn writer_block(memory: &Path, agent: &str) -> String {
-    let tool = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("momo"));
+fn writer_block(memory: &Path, agent: &str, tool: &Path) -> String {
     format!(
         "## Shared Memory - Momonogi\n\n\
 Canonical global store: `{memory}`. Index: `{memory}/MEMORY.md`.\n\
@@ -92,26 +104,28 @@ Canonical global store: `{memory}`. `{label}` is a read-only consumer.\n\n\
     )
 }
 
-fn no_access_block(memory: &Path, label: &str) -> String {
+fn no_access_block(memory: &Path, label: &str, tool: &Path) -> String {
     format!(
         "## Shared Memory - Momonogi (No Access)\n\n\
 Canonical global store: `{memory}`. `{label}` is not granted access.\n\n\
 - Do not read, create, edit, move, archive, reindex, migrate, or delete anything in this shared store.\n\
-- Ask a current Momonogi writer to grant a role, then rerun `momo configure` for this host.",
+- Ask a current Momonogi writer to grant a role, then rerun `{tool} configure` for this host.",
         memory = memory.display(),
+        tool = tool.display(),
     )
 }
 
-fn openclaw_block(memory: &Path, role: Option<store::AccessRole>) -> String {
+fn openclaw_block(memory: &Path, role: Option<store::AccessRole>, tool: &Path) -> String {
     let policy = match role {
         Some(store::AccessRole::Writer) => format!(
             "- If the current host is OpenClaw, it is an equal trusted writer with agent id `openclaw`. Continue using OpenClaw's native memory as primary.\n\n\
 For OpenClaw, the canonical shared store is `{memory}`. Index: `{memory}/MEMORY.md`.\n\n\
 - Read the index only when continuity or durable preferences are relevant, then open only relevant detail notes. Project `.momonogi` overrides global memory.\n\
-- Never edit canonical notes or `MEMORY.md` directly; write only through `momo` with `--agent openclaw`.\n\
-- Use ETags for updates and archives, and run `momo doctor {memory}` after meaningful maintenance.\n\
+- Never edit canonical notes or `MEMORY.md` directly; write only through `{tool}` with `--agent openclaw`.\n\
+- Use ETags for updates and archives, and run `{tool} doctor {memory}` after meaningful maintenance.\n\
 - Save only durable preferences, reusable feedback, project continuity, and reference pointers. Never save secrets or facts already authoritative elsewhere.",
             memory = memory.display(),
+            tool = tool.display(),
         ),
         Some(store::AccessRole::Reader) => format!(
             "- If the current host is OpenClaw, it is a read-only Momonogi consumer. Continue using OpenClaw's native memory as primary and use the shared store only as supplementary context.\n\n\
@@ -124,8 +138,9 @@ For OpenClaw, the canonical shared store is `{memory}`.\n\n\
         ),
         None => format!(
             "- If the current host is OpenClaw, it is not granted access to the shared Momonogi store. Continue using OpenClaw's native memory only.\n\n\
-For OpenClaw, the canonical shared store is `{memory}`. Do not read, create, edit, move, archive, reindex, migrate, or delete anything in it. Ask a current writer to grant access, then rerun `momo configure --host openclaw`.",
+For OpenClaw, the canonical shared store is `{memory}`. Do not read, create, edit, move, archive, reindex, migrate, or delete anything in it. Ask a current writer to grant access, then rerun `{tool} configure --host openclaw`.",
             memory = memory.display(),
+            tool = tool.display(),
         ),
     };
     format!(
@@ -143,8 +158,7 @@ fn home() -> Result<PathBuf> {
         .ok_or_else(|| Error("cannot determine home directory".into()))
 }
 
-fn target(host: Host, openclaw_workspace: Option<&Path>) -> Result<PathBuf> {
-    let home = home()?;
+fn target(host: Host, home: &Path, openclaw_workspace: Option<&Path>) -> Result<PathBuf> {
     Ok(match host {
         Host::Codex => home.join(".codex/AGENTS.md"),
         Host::Claude => home.join(".claude/CLAUDE.md"),
@@ -185,10 +199,9 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn hook_command(memory: &Path, mode: &str) -> String {
-    let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("momo"));
+fn hook_command(memory: &Path, mode: &str, tool: &Path) -> String {
     [
-        shell_quote(&executable.to_string_lossy()),
+        shell_quote(&tool.to_string_lossy()),
         "hook".into(),
         "--memory-root".into(),
         shell_quote(&memory.to_string_lossy()),
@@ -217,14 +230,14 @@ fn hook_config(path: &Path) -> Result<Map<String, Value>> {
     })
 }
 
-fn merge_hooks(path: &Path, memory: &Path, mode: &str) -> Result<()> {
+fn merged_hooks(path: &Path, memory: &Path, mode: &str, tool: &Path) -> Result<String> {
     let mut root = hook_config(path)?;
     let hooks = root
         .entry("hooks")
         .or_insert_with(|| Value::Object(Map::new()))
         .as_object_mut()
         .ok_or_else(|| Error(format!("hooks must be an object: {}", path.display())))?;
-    let command = hook_command(memory, mode);
+    let command = hook_command(memory, mode, tool);
     for event in EVENTS {
         let groups = hooks
             .entry(event)
@@ -283,15 +296,14 @@ fn merge_hooks(path: &Path, memory: &Path, mode: &str) -> Result<()> {
         }
         groups.push(Value::Object(group));
     }
-    refuse_symlink(path)?;
     let mut rendered = serde_json::to_string_pretty(&Value::Object(root))?;
     rendered.push('\n');
-    store::atomic_write(path, rendered.as_bytes(), 0o600)
+    Ok(rendered)
 }
 
-fn remove_hooks(path: &Path) -> Result<bool> {
+fn hooks_without_momonogi(path: &Path) -> Result<Option<String>> {
     if !path.exists() {
-        return Ok(false);
+        return Ok(None);
     }
     let mut root = hook_config(path)?;
     let mut changed = false;
@@ -351,12 +363,287 @@ fn remove_hooks(path: &Path) -> Result<bool> {
         root.remove("hooks");
     }
     if changed {
-        refuse_symlink(path)?;
         let mut rendered = serde_json::to_string_pretty(&Value::Object(root))?;
         rendered.push('\n');
-        store::atomic_write(path, rendered.as_bytes(), 0o600)?;
+        Ok(Some(rendered))
+    } else {
+        Ok(None)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConfigurationFileKind {
+    Rules,
+    Hooks,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConfigurationAction {
+    Create,
+    Update,
+    RemoveManaged,
+    Unchanged,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigurationFile {
+    pub path: String,
+    pub kind: ConfigurationFileKind,
+    pub action: ConfigurationAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before_hash: Option<String>,
+    pub after_hash: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigurationPlan {
+    pub agent_id: String,
+    pub role: Option<store::AccessRole>,
+    pub files: Vec<ConfigurationFile>,
+    pub warnings: Vec<String>,
+    pub digest: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigurationApply {
+    pub changed_files: Vec<String>,
+    pub digest: String,
+}
+
+pub struct SyncOptions<'a> {
+    pub host: Host,
+    pub home: &'a Path,
+    pub openclaw_workspaces: &'a [PathBuf],
+    pub codex_projects: &'a [PathBuf],
+    pub memory_root: &'a Path,
+    pub hook_mode: &'a str,
+    pub install_hooks: bool,
+    pub tool: &'a Path,
+}
+
+struct PlannedFile {
+    summary: ConfigurationFile,
+    contents: Vec<u8>,
+    mode: u32,
+}
+
+fn canonical_directories(paths: &[PathBuf], label: &str) -> Result<Vec<PathBuf>> {
+    let mut directories = BTreeSet::new();
+    for path in paths {
+        let expanded = store::expand_path(path);
+        let canonical = expanded
+            .canonicalize()
+            .map_err(|error| Error(format!("invalid {label} {}: {error}", expanded.display())))?;
+        if !canonical.is_dir() {
+            return Err(Error(format!(
+                "invalid {label} {}: not a directory",
+                canonical.display()
+            )));
+        }
+        directories.insert(canonical);
+    }
+    Ok(directories.into_iter().collect())
+}
+
+fn plan_file(
+    path: PathBuf,
+    kind: ConfigurationFileKind,
+    contents: String,
+    mode: u32,
+    removes_managed: bool,
+) -> Result<PlannedFile> {
+    refuse_symlink(&path)?;
+    let existed = path.exists();
+    let before = read_optional(&path)?;
+    let action = if before == contents {
+        ConfigurationAction::Unchanged
+    } else if !existed {
+        ConfigurationAction::Create
+    } else if removes_managed {
+        ConfigurationAction::RemoveManaged
+    } else {
+        ConfigurationAction::Update
+    };
+    Ok(PlannedFile {
+        summary: ConfigurationFile {
+            path: path.to_string_lossy().into_owned(),
+            kind,
+            action,
+            before_hash: existed.then(|| store::sha(before.as_bytes())),
+            after_hash: store::sha(contents.as_bytes()),
+        },
+        contents: contents.into_bytes(),
+        mode,
+    })
+}
+
+fn current_hash(path: &Path) -> Result<Option<String>> {
+    refuse_symlink(path)?;
+    match fs::read(path) {
+        Ok(contents) => Ok(Some(store::sha(contents))),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(Error(format!("cannot read {}: {error}", path.display()))),
+    }
+}
+
+fn build_plan(options: &SyncOptions<'_>) -> Result<(ConfigurationPlan, Vec<PlannedFile>)> {
+    let memory = store::expand_path(options.memory_root);
+    let memory = memory.canonicalize().map_err(|error| {
+        Error(format!(
+            "invalid Momonogi store {}: {error}",
+            memory.display()
+        ))
+    })?;
+    let manifest = store::read_manifest(&memory)?;
+    let role = store::manifest_role(&manifest, options.host.agent_id());
+    let workspaces = canonical_directories(options.openclaw_workspaces, "OpenClaw workspace")?;
+    let codex_projects = canonical_directories(options.codex_projects, "Codex project")?;
+    let mut warnings = Vec::new();
+    let mut planned = Vec::new();
+
+    let rule_targets = if options.host == Host::Openclaw {
+        if workspaces.is_empty() {
+            warnings
+                .push("No registered project workspace is available for OpenClaw rules.".into());
+        }
+        workspaces
+            .iter()
+            .map(|workspace| target(options.host, options.home, Some(workspace)))
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        vec![target(options.host, options.home, None)?]
+    };
+    for path in rule_targets {
+        let existing = read_optional(&path)?;
+        let block = match (options.host, role) {
+            (Host::Openclaw, role) => openclaw_block(&memory, role, options.tool),
+            (_, Some(store::AccessRole::Writer)) => {
+                writer_block(&memory, options.host.agent_id(), options.tool)
+            }
+            (_, Some(store::AccessRole::Reader)) => reader_block(&memory, options.host.label()),
+            (_, None) => no_access_block(&memory, options.host.label(), options.tool),
+        };
+        planned.push(plan_file(
+            path,
+            ConfigurationFileKind::Rules,
+            managed(&existing, &block)?,
+            0o644,
+            false,
+        )?);
+    }
+
+    if options.install_hooks && options.host == Host::Claude {
+        let path = options.home.join(".claude/settings.json");
+        if role == Some(store::AccessRole::Writer) {
+            let rendered = merged_hooks(&path, &memory, options.hook_mode, options.tool)?;
+            planned.push(plan_file(
+                path,
+                ConfigurationFileKind::Hooks,
+                rendered,
+                0o600,
+                false,
+            )?);
+        } else if let Some(rendered) = hooks_without_momonogi(&path)? {
+            planned.push(plan_file(
+                path,
+                ConfigurationFileKind::Hooks,
+                rendered,
+                0o600,
+                true,
+            )?);
+        }
+    }
+
+    if options.install_hooks && options.host == Host::Codex {
+        if codex_projects.is_empty() {
+            warnings
+                .push("No registered Codex project is available for project-scoped hooks.".into());
+        }
+        for project in codex_projects {
+            let path = project.join(".codex/hooks.json");
+            if role == Some(store::AccessRole::Writer) {
+                let rendered = merged_hooks(&path, &memory, options.hook_mode, options.tool)?;
+                planned.push(plan_file(
+                    path,
+                    ConfigurationFileKind::Hooks,
+                    rendered,
+                    0o600,
+                    false,
+                )?);
+            } else if let Some(rendered) = hooks_without_momonogi(&path)? {
+                planned.push(plan_file(
+                    path,
+                    ConfigurationFileKind::Hooks,
+                    rendered,
+                    0o600,
+                    true,
+                )?);
+            }
+        }
+    }
+
+    let files: Vec<_> = planned.iter().map(|file| file.summary.clone()).collect();
+    let digest = store::sha(serde_json::to_vec(&(
+        options.host,
+        role,
+        &files,
+        &warnings,
+    ))?);
+    Ok((
+        ConfigurationPlan {
+            agent_id: options.host.agent_id().into(),
+            role,
+            files,
+            warnings,
+            digest,
+        },
+        planned,
+    ))
+}
+
+fn apply_files(files: &[PlannedFile]) -> Result<Vec<String>> {
+    for file in files {
+        let path = Path::new(&file.summary.path);
+        let actual = current_hash(path)?;
+        if actual != file.summary.before_hash {
+            return Err(Error(format!(
+                "configuration conflict for {}: the file changed after preview",
+                path.display()
+            )));
+        }
+    }
+    let mut changed = Vec::new();
+    for file in files {
+        if file.summary.action == ConfigurationAction::Unchanged {
+            continue;
+        }
+        let path = Path::new(&file.summary.path);
+        store::atomic_write(path, &file.contents, file.mode)?;
+        changed.push(file.summary.path.clone());
     }
     Ok(changed)
+}
+
+pub fn preview_host(options: &SyncOptions<'_>) -> Result<ConfigurationPlan> {
+    build_plan(options).map(|(plan, _)| plan)
+}
+
+pub fn apply_host(options: &SyncOptions<'_>, expected_digest: &str) -> Result<ConfigurationApply> {
+    let (plan, files) = build_plan(options)?;
+    if plan.digest != expected_digest {
+        return Err(Error(
+            "configuration preview is stale; refresh it before applying".into(),
+        ));
+    }
+    Ok(ConfigurationApply {
+        changed_files: apply_files(&files)?,
+        digest: plan.digest,
+    })
 }
 
 pub fn apply(
@@ -367,95 +654,31 @@ pub fn apply(
     hook_mode: &str,
     install_hooks: bool,
 ) -> Result<Vec<PathBuf>> {
-    let memory = store::expand_path(memory_root);
-    let memory = memory.canonicalize().map_err(|error| {
-        Error(format!(
-            "invalid Momonogi store {}: {error}",
-            memory.display()
-        ))
-    })?;
-    let manifest = store::read_manifest(&memory)?;
-    if install_hooks {
-        for host in hosts {
-            if matches!(host, Host::Claude) {
-                hook_config(&home()?.join(".claude/settings.json"))?;
-            }
-            if matches!(host, Host::Codex) {
-                for project in codex_projects {
-                    let project = store::expand_path(project)
-                        .canonicalize()
-                        .map_err(|error| {
-                            Error(format!(
-                                "invalid Codex project {}: {error}",
-                                project.display()
-                            ))
-                        })?;
-                    hook_config(&project.join(".codex/hooks.json"))?;
-                }
-            }
-        }
+    if hosts.contains(&Host::Openclaw) && workspaces.is_empty() {
+        return Err(Error(
+            "--host openclaw requires --openclaw-workspace".into(),
+        ));
     }
-    let mut configured = Vec::new();
+    let home = home()?;
+    let tool = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("momo"));
+    let mut plans = Vec::new();
+    let mut configured = BTreeSet::new();
     for host in hosts {
-        let targets: Vec<PathBuf> = if matches!(host, Host::Openclaw) {
-            if workspaces.is_empty() {
-                return Err(Error(
-                    "--host openclaw requires --openclaw-workspace".into(),
-                ));
-            }
-            workspaces
-                .iter()
-                .map(|workspace| target(*host, Some(&store::expand_path(workspace))))
-                .collect::<Result<_>>()?
-        } else {
-            vec![target(*host, None)?]
-        };
-        for path in targets {
-            refuse_symlink(&path)?;
-            let existing = read_optional(&path)?;
-            let role = store::manifest_role(&manifest, host.agent_id());
-            let block = match (host, role) {
-                (Host::Openclaw, role) => openclaw_block(&memory, role),
-                (_, Some(store::AccessRole::Writer)) => writer_block(&memory, host.agent_id()),
-                (_, Some(store::AccessRole::Reader)) => reader_block(&memory, host.label()),
-                (_, None) => no_access_block(&memory, host.label()),
-            };
-            let rendered = managed(&existing, &block)?;
-            store::atomic_write(&path, rendered.as_bytes(), 0o644)?;
-            configured.push(path);
-        }
-        let writer =
-            store::manifest_role(&manifest, host.agent_id()) == Some(store::AccessRole::Writer);
-        if install_hooks && matches!(host, Host::Claude) {
-            let path = home()?.join(".claude/settings.json");
-            if writer {
-                merge_hooks(&path, &memory, hook_mode)?;
-                configured.push(path);
-            } else if remove_hooks(&path)? {
-                configured.push(path);
-            }
-        }
-        if install_hooks && matches!(host, Host::Codex) {
-            for project in codex_projects {
-                let project = store::expand_path(project)
-                    .canonicalize()
-                    .map_err(|error| {
-                        Error(format!(
-                            "invalid Codex project {}: {error}",
-                            project.display()
-                        ))
-                    })?;
-                let path = project.join(".codex/hooks.json");
-                if writer {
-                    merge_hooks(&path, &memory, hook_mode)?;
-                    configured.push(path);
-                } else if remove_hooks(&path)? {
-                    configured.push(path);
-                }
-            }
-        }
+        let (_, files) = build_plan(&SyncOptions {
+            host: *host,
+            home: &home,
+            openclaw_workspaces: workspaces,
+            codex_projects,
+            memory_root,
+            hook_mode,
+            install_hooks,
+            tool: &tool,
+        })?;
+        configured.extend(files.iter().map(|file| PathBuf::from(&file.summary.path)));
+        plans.extend(files);
     }
-    Ok(configured)
+    apply_files(&plans)?;
+    Ok(configured.into_iter().collect())
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ import {
   ChevronRight,
   CircleAlert,
   Database,
+  FileCog,
   FolderPlus,
   FolderOpen,
   Plus,
@@ -25,12 +26,14 @@ import {
   getMemoryIndex,
   getStoreRegistry,
   changeMemoryTag,
+  applyAgentConfiguration,
+  previewAgentConfiguration,
   registerProjectStore,
   removeProjectStore,
   setAgentAccess,
 } from "./bridge";
 import markUrl from "./assets/momonogi-mark.svg";
-import type { AgentDiscoveryPayload, AgentRole, AgentSummary, BootstrapPayload, ManagedHookState, MemoryDetailPayload, MemoryIndexPayload, MemorySummary, StoreSummary, ViewId } from "./types";
+import type { AgentDiscoveryPayload, AgentRole, AgentSummary, BootstrapPayload, ConfigurationAction, ConfigurationPlanPayload, ManagedHookState, MemoryDetailPayload, MemoryIndexPayload, MemorySummary, StoreSummary, ViewId } from "./types";
 
 const views: Array<{ id: ViewId; label: string; icon: typeof UserRoundCog }> = [
   { id: "agents", label: "Agents", icon: UserRoundCog },
@@ -157,7 +160,17 @@ function Toolbar({
   );
 }
 
-function AgentInspector({ agent, onClose }: { agent: AgentSummary; onClose: () => void }) {
+function AgentInspector({
+  agent,
+  busy,
+  onClose,
+  onPreviewConfiguration,
+}: {
+  agent: AgentSummary;
+  busy: boolean;
+  onClose: () => void;
+  onPreviewConfiguration: () => void;
+}) {
   return (
     <aside className="store-inspector agent-inspector" aria-labelledby="agent-inspector-heading">
       <div className="store-inspector__head">
@@ -179,6 +192,10 @@ function AgentInspector({ agent, onClose }: { agent: AgentSummary; onClose: () =
         {agent.configPaths.length > 0 ? agent.configPaths.map((path) => <code key={path} title={path}>{path}</code>) : <p>No host adapter paths</p>}
       </div>
       {agent.configIssue && <p className="config-issue"><CircleAlert aria-hidden="true" size={14} />{agent.configIssue}</p>}
+      <button className="secondary-button" type="button" disabled={busy} onClick={onPreviewConfiguration}>
+        <FileCog aria-hidden="true" size={16} />
+        Preview configuration
+      </button>
     </aside>
   );
 }
@@ -250,22 +267,94 @@ interface AccessNotice {
   text: string;
 }
 
+function configurationActionLabel(action: ConfigurationAction): string {
+  if (action === "remove-managed") return "Remove Momonogi";
+  return action.charAt(0).toUpperCase() + action.slice(1);
+}
+
+function ConfigurationPreview({
+  plan,
+  agentName,
+  busy,
+  onApply,
+  onDismiss,
+}: {
+  plan: ConfigurationPlanPayload;
+  agentName: string;
+  busy: boolean;
+  onApply: () => void;
+  onDismiss: () => void;
+}) {
+  const changed = plan.files.filter((file) => file.action !== "unchanged").length;
+  return (
+    <section className="configuration-preview" aria-labelledby="configuration-preview-heading">
+      <div className="configuration-preview__head">
+        <div>
+          <span>{roleLabel(plan.role ?? "none")} configuration</span>
+          <h3 id="configuration-preview-heading">{agentName}</h3>
+        </div>
+        <button className="icon-button" type="button" aria-label="Dismiss configuration preview" title="Dismiss" disabled={busy} onClick={onDismiss}>
+          <X aria-hidden="true" size={16} />
+        </button>
+      </div>
+      {plan.warnings.map((warning) => (
+        <p className="configuration-preview__warning" key={warning}><CircleAlert aria-hidden="true" size={14} />{warning}</p>
+      ))}
+      <div className="configuration-file-list" role="list" aria-label="Configuration files">
+        {plan.files.map((file) => (
+          <div
+            className="configuration-file"
+            role="listitem"
+            aria-label={`${file.path}, ${file.kind}, ${configurationActionLabel(file.action)}`}
+            key={`${file.kind}:${file.path}`}
+          >
+            <FileCog aria-hidden="true" size={16} />
+            <code title={file.path}>{file.path}</code>
+            <span>{file.kind}</span>
+            <strong data-action={file.action}>{configurationActionLabel(file.action)}</strong>
+          </div>
+        ))}
+        {plan.files.length === 0 && <p className="configuration-preview__empty">No host configuration paths are available.</p>}
+      </div>
+      <div className="configuration-preview__actions">
+        <span>{changed === 0 ? "Configuration is current" : `${changed} file${changed === 1 ? "" : "s"} will change`}</span>
+        <button className="sync-button" type="button" disabled={busy || changed === 0} onClick={onApply}>
+          <Check aria-hidden="true" size={16} />
+          Apply changes
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function AgentsView({
   query,
   discovery,
   loading,
   error,
   accessNotice,
+  configurationNotice,
+  configurationPlan,
+  configurationBusy,
   savingAgentId,
   onSetAccess,
+  onPreviewConfiguration,
+  onApplyConfiguration,
+  onDismissConfiguration,
 }: {
   query: string;
   discovery: AgentDiscoveryPayload | null;
   loading: boolean;
   error: string | null;
   accessNotice: AccessNotice | null;
+  configurationNotice: AccessNotice | null;
+  configurationPlan: ConfigurationPlanPayload | null;
+  configurationBusy: boolean;
   savingAgentId: string | null;
   onSetAccess: (agentId: string, role: AgentRole, actor: string) => void;
+  onPreviewConfiguration: (agentId: string) => void;
+  onApplyConfiguration: () => void;
+  onDismissConfiguration: () => void;
 }) {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [actor, setActor] = useState("");
@@ -309,6 +398,12 @@ function AgentsView({
           <span>{accessNotice?.text ?? error}</span>
         </div>
       )}
+      {configurationNotice && (
+        <div className="access-notice configuration-notice" data-state={configurationNotice.state} role={configurationNotice.state === "error" ? "alert" : "status"}>
+          {configurationNotice.state === "ok" ? <Check aria-hidden="true" size={15} /> : <CircleAlert aria-hidden="true" size={15} />}
+          <span>{configurationNotice.text}</span>
+        </div>
+      )}
 
       <div className="metric-strip" aria-label="Agent summary">
         <div><strong>{allAgents.length}</strong><span>Detected</span></div>
@@ -316,6 +411,16 @@ function AgentsView({
         <div><strong>{readers}</strong><span>Readers</span></div>
         <div><strong>{installed} / {allAgents.length}</strong><span>Installed</span></div>
       </div>
+
+      {configurationPlan && (
+        <ConfigurationPreview
+          plan={configurationPlan}
+          agentName={allAgents.find((agent) => agent.id === configurationPlan.agentId)?.name ?? configurationPlan.agentId}
+          busy={configurationBusy}
+          onApply={onApplyConfiguration}
+          onDismiss={onDismissConfiguration}
+        />
+      )}
 
       <div className="workbench-grid">
         <div className="agent-list" role="list">
@@ -357,7 +462,14 @@ function AgentsView({
           ))}
           {agents.length === 0 && <EmptyState label={loading ? "Scanning local Agents" : error ? "Agent discovery failed" : "No Agents match this search"} />}
         </div>
-        {selectedAgent ? <AgentInspector agent={selectedAgent} onClose={() => setSelectedAgentId(null)} /> : <StoreInspector discovery={discovery} />}
+        {selectedAgent ? (
+          <AgentInspector
+            agent={selectedAgent}
+            busy={configurationBusy}
+            onClose={() => setSelectedAgentId(null)}
+            onPreviewConfiguration={() => onPreviewConfiguration(selectedAgent.id)}
+          />
+        ) : <StoreInspector discovery={discovery} />}
       </div>
     </section>
   );
@@ -795,6 +907,9 @@ export function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [savingAgentId, setSavingAgentId] = useState<string | null>(null);
   const [accessNotice, setAccessNotice] = useState<AccessNotice | null>(null);
+  const [configurationPlan, setConfigurationPlan] = useState<ConfigurationPlanPayload | null>(null);
+  const [configurationNotice, setConfigurationNotice] = useState<AccessNotice | null>(null);
+  const [configurationBusy, setConfigurationBusy] = useState(false);
   const [stores, setStores] = useState<StoreSummary[]>([]);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [registryBusy, setRegistryBusy] = useState(false);
@@ -835,6 +950,25 @@ export function App() {
     void refreshData();
   }, [refreshData]);
 
+  const loadConfigurationPreview = useCallback(async (agentId: string) => {
+    setConfigurationBusy(true);
+    setConfigurationNotice(null);
+    try {
+      const plan = await previewAgentConfiguration(agentId);
+      setConfigurationPlan(plan);
+      if (!plan) {
+        setConfigurationNotice({ state: "warning", text: "This Agent has no managed host adapter. Its manifest role is still configurable." });
+      }
+      return plan;
+    } catch (cause) {
+      setConfigurationPlan(null);
+      setConfigurationNotice({ state: "error", text: cause instanceof Error ? cause.message : String(cause) });
+      return null;
+    } finally {
+      setConfigurationBusy(false);
+    }
+  }, []);
+
   const updateAccess = useCallback(async (agentId: string, role: AgentRole, actor: string) => {
     const ifMatch = agentDiscovery?.storeEtag;
     if (!ifMatch) {
@@ -846,6 +980,7 @@ export function App() {
     try {
       const result = await setAgentAccess({ agentId, role, actor, ifMatch });
       await refreshData();
+      await loadConfigurationPreview(agentId);
       setAccessNotice({
         state: "ok",
         text: result.changed ? `Access updated at revision ${result.revision}.` : "Access was already current.",
@@ -861,7 +996,34 @@ export function App() {
     } finally {
       setSavingAgentId(null);
     }
-  }, [agentDiscovery?.storeEtag, refreshData]);
+  }, [agentDiscovery?.storeEtag, loadConfigurationPreview, refreshData]);
+
+  const applyConfiguration = useCallback(async () => {
+    if (!configurationPlan) return;
+    setConfigurationBusy(true);
+    setConfigurationNotice(null);
+    try {
+      const result = await applyAgentConfiguration(configurationPlan.agentId, configurationPlan.digest);
+      await refreshData();
+      setConfigurationPlan(await previewAgentConfiguration(configurationPlan.agentId));
+      setConfigurationNotice({
+        state: "ok",
+        text: result.changedFiles.length === 0
+          ? "Host configuration was already current."
+          : `${result.changedFiles.length} host configuration file${result.changedFiles.length === 1 ? " was" : "s were"} synchronized.`,
+      });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (message.includes("preview is stale") || message.includes("configuration conflict")) {
+        setConfigurationPlan(await previewAgentConfiguration(configurationPlan.agentId));
+        setConfigurationNotice({ state: "warning", text: "Host configuration changed elsewhere. The preview was refreshed." });
+      } else {
+        setConfigurationNotice({ state: "error", text: message });
+      }
+    } finally {
+      setConfigurationBusy(false);
+    }
+  }, [configurationPlan, refreshData]);
 
   const addProjectStore = useCallback(async (path: string) => {
     setRegistryBusy(true);
@@ -899,8 +1061,14 @@ export function App() {
         loading={refreshing && !agentDiscovery}
         error={discoveryError}
         accessNotice={accessNotice}
+        configurationNotice={configurationNotice}
+        configurationPlan={configurationPlan}
+        configurationBusy={configurationBusy}
         savingAgentId={savingAgentId}
         onSetAccess={(agentId, role, actor) => void updateAccess(agentId, role, actor)}
+        onPreviewConfiguration={(agentId) => void loadConfigurationPreview(agentId)}
+        onApplyConfiguration={() => void applyConfiguration()}
+        onDismissConfiguration={() => { setConfigurationPlan(null); setConfigurationNotice(null); }}
       />
     );
     if (active === "memories") return (
@@ -923,7 +1091,7 @@ export function App() {
         onRemove={removeStore}
       />
     );
-  }, [accessNotice, active, addProjectStore, agentDiscovery, bootstrap, discoveryError, memoryError, memoryIndex, query, refreshing, registryBusy, registryError, removeStore, savingAgentId, stores, updateAccess]);
+  }, [accessNotice, active, addProjectStore, agentDiscovery, applyConfiguration, bootstrap, configurationBusy, configurationNotice, configurationPlan, discoveryError, loadConfigurationPreview, memoryError, memoryIndex, query, refreshing, registryBusy, registryError, removeStore, savingAgentId, stores, updateAccess]);
 
   function changeView(view: ViewId) {
     setActive(view);

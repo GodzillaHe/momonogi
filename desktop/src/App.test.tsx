@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { changeMemoryTag, resetBrowserBridgeForTests, setAgentAccess } from "./bridge";
+import { applyAgentConfiguration, changeMemoryTag, previewAgentConfiguration, resetBrowserBridgeForTests, setAgentAccess } from "./bridge";
 import { App } from "./App";
 
 describe("Momonogi desktop shell", () => {
@@ -186,6 +186,55 @@ describe("Momonogi desktop shell", () => {
 
     expect(await screen.findByText("Access updated at revision 25.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "OpenCode: Writer" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("previews and applies host configuration after an access change", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("OpenCode");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Writer identity" }), "codex");
+    await user.click(screen.getByRole("button", { name: "OpenCode: Writer" }));
+
+    const preview = await screen.findByRole("region", { name: "OpenCode" });
+    expect(within(preview).getByRole("listitem", { name: /AGENTS\.md, rules, Update/i })).toBeInTheDocument();
+    expect(within(preview).getByText("1 file will change")).toBeInTheDocument();
+    await user.click(within(preview).getByRole("button", { name: "Apply changes" }));
+
+    expect(await screen.findByText("1 host configuration file was synchronized.")).toBeInTheDocument();
+    expect(within(await screen.findByRole("region", { name: "OpenCode" })).getByText("Configuration is current")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "OpenCode" })).getByRole("button", { name: "Apply changes" })).toBeDisabled();
+  });
+
+  it("removes managed hooks when a writer becomes a reader", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Claude Code" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Writer identity" }), "codex");
+    await user.click(screen.getByRole("button", { name: "Claude Code: Reader" }));
+
+    const preview = await screen.findByRole("region", { name: "Claude Code" });
+    expect(within(preview).getByRole("listitem", { name: /settings\.json, hooks, Remove Momonogi/i })).toBeInTheDocument();
+    await user.click(within(preview).getByRole("button", { name: "Apply changes" }));
+
+    expect(await screen.findByText("2 host configuration files were synchronized.")).toBeInTheDocument();
+    expect(screen.getByText("Hooks off")).toBeInTheDocument();
+  });
+
+  it("refreshes a stale host configuration preview", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("OpenCode");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Writer identity" }), "codex");
+    await user.click(screen.getByRole("button", { name: "OpenCode: Writer" }));
+    const preview = await screen.findByRole("region", { name: "OpenCode" });
+
+    const external = await previewAgentConfiguration("opencode");
+    expect(external).not.toBeNull();
+    await applyAgentConfiguration("opencode", external!.digest);
+    await user.click(within(preview).getByRole("button", { name: "Apply changes" }));
+
+    expect(await screen.findByText("Host configuration changed elsewhere. The preview was refreshed.")).toBeInTheDocument();
+    expect(within(await screen.findByRole("region", { name: "OpenCode" })).getByText("Configuration is current")).toBeInTheDocument();
   });
 
   it("prevents removing the final writer", async () => {

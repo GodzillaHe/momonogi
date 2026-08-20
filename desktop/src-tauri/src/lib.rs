@@ -32,13 +32,72 @@ struct AgentDiscoveryPayload {
     store_issue: Option<String>,
 }
 
-#[tauri::command]
-fn discover_agents(catalog: Vec<AgentProbe>) -> Result<AgentDiscoveryPayload, String> {
-    let home = std::env::var_os("HOME")
+fn home_directory() -> Result<PathBuf, String> {
+    std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .ok_or_else(|| "cannot determine home directory".to_owned())?;
+        .ok_or_else(|| "cannot determine home directory".to_owned())
+}
+
+fn project_workspaces(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
+    let registry = momonogi::registry::load_registry(&registry_path(app)?)
+        .map_err(|error| error.to_string())?;
+    let mut workspaces = Vec::new();
+    for store in registry.projects {
+        let store = PathBuf::from(store);
+        let workspace = if store.file_name().is_some_and(|name| name == ".momonogi") {
+            store
+                .parent()
+                .map(PathBuf::from)
+                .ok_or_else(|| "project store has no parent workspace".to_owned())?
+        } else {
+            store
+        };
+        if !workspaces.contains(&workspace) {
+            workspaces.push(workspace);
+        }
+    }
+    workspaces.sort();
+    Ok(workspaces)
+}
+
+fn is_executable(path: &std::path::Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn momo_executable(home: &std::path::Path, path: &std::ffi::OsStr) -> PathBuf {
+    let local = home.join(".local/bin/momo");
+    if is_executable(&local) {
+        return local;
+    }
+    std::env::split_paths(path)
+        .map(|directory| directory.join("momo"))
+        .find(|candidate| is_executable(candidate))
+        .unwrap_or_else(|| PathBuf::from("momo"))
+}
+
+#[tauri::command]
+fn discover_agents(
+    app: tauri::AppHandle,
+    catalog: Vec<AgentProbe>,
+) -> Result<AgentDiscoveryPayload, String> {
+    let home = home_directory()?;
     let path = std::env::var_os("PATH").unwrap_or_else(|| OsString::from(""));
+    let workspaces = project_workspaces(&app)?;
     let store_root = momonogi::store::expand_path(momonogi::store::DEFAULT_GLOBAL_ROOT);
     let loaded = momonogi::store::load_manifest(&store_root);
     let (manifest, store_revision, store_etag, store_issue) = match &loaded {
@@ -55,8 +114,8 @@ fn discover_agents(catalog: Vec<AgentProbe>) -> Result<AgentDiscoveryPayload, St
         path: &path,
         manifest,
         catalog: &catalog,
-        openclaw_workspaces: &[],
-        codex_projects: &[],
+        openclaw_workspaces: &workspaces,
+        codex_projects: &workspaces,
     });
     Ok(AgentDiscoveryPayload {
         agents,
@@ -103,6 +162,69 @@ fn set_agent_access(
         writers: mutation.loaded.manifest.writers,
         readers: mutation.loaded.manifest.readers,
     })
+}
+
+fn configuration_plan(
+    app: &tauri::AppHandle,
+    agent_id: &str,
+) -> Result<Option<momonogi::configure::ConfigurationPlan>, String> {
+    let Some(host) = momonogi::configure::Host::from_agent_id(agent_id) else {
+        return Ok(None);
+    };
+    let home = home_directory()?;
+    let path = std::env::var_os("PATH").unwrap_or_else(|| OsString::from(""));
+    let tool = momo_executable(&home, &path);
+    let workspaces = project_workspaces(app)?;
+    let memory = momonogi::store::expand_path(momonogi::store::DEFAULT_GLOBAL_ROOT);
+    momonogi::configure::preview_host(&momonogi::configure::SyncOptions {
+        host,
+        home: &home,
+        openclaw_workspaces: &workspaces,
+        codex_projects: &workspaces,
+        memory_root: &memory,
+        hook_mode: "explicit",
+        install_hooks: true,
+        tool: &tool,
+    })
+    .map(Some)
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn preview_agent_configuration(
+    app: tauri::AppHandle,
+    agent_id: String,
+) -> Result<Option<momonogi::configure::ConfigurationPlan>, String> {
+    configuration_plan(&app, &agent_id)
+}
+
+#[tauri::command]
+fn apply_agent_configuration(
+    app: tauri::AppHandle,
+    agent_id: String,
+    digest: String,
+) -> Result<momonogi::configure::ConfigurationApply, String> {
+    let host = momonogi::configure::Host::from_agent_id(&agent_id)
+        .ok_or_else(|| format!("agent {agent_id:?} has no Momonogi host adapter"))?;
+    let home = home_directory()?;
+    let path = std::env::var_os("PATH").unwrap_or_else(|| OsString::from(""));
+    let tool = momo_executable(&home, &path);
+    let workspaces = project_workspaces(&app)?;
+    let memory = momonogi::store::expand_path(momonogi::store::DEFAULT_GLOBAL_ROOT);
+    momonogi::configure::apply_host(
+        &momonogi::configure::SyncOptions {
+            host,
+            home: &home,
+            openclaw_workspaces: &workspaces,
+            codex_projects: &workspaces,
+            memory_root: &memory,
+            hook_mode: "explicit",
+            install_hooks: true,
+            tool: &tool,
+        },
+        &digest,
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn registry_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -210,6 +332,8 @@ pub fn run() {
             bootstrap,
             discover_agents,
             set_agent_access,
+            preview_agent_configuration,
+            apply_agent_configuration,
             get_store_registry,
             register_project_store,
             remove_project_store,

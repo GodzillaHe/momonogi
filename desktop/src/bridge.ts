@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { agentCatalog } from "./agent-catalog";
 import { mockAgentDiscovery, mockMemories, mockMemoryBodies, mockStores } from "./mock-data";
-import type { AccessUpdateInput, AccessUpdatePayload, AgentDiscoveryPayload, BootstrapPayload, MemoryDetailPayload, MemoryIndexPayload, StoreSummary, TagMutationPayload } from "./types";
+import type { AccessUpdateInput, AccessUpdatePayload, AgentDiscoveryPayload, AgentRole, BootstrapPayload, ConfigurationAction, ConfigurationApplyPayload, ConfigurationFilePayload, ConfigurationPlanPayload, MemoryDetailPayload, MemoryIndexPayload, StoreSummary, TagMutationPayload } from "./types";
 
 const browserPayload: BootstrapPayload = {
   appVersion: "0.1.0-dev",
@@ -12,11 +12,15 @@ const browserPayload: BootstrapPayload = {
 let browserDiscovery = structuredClone(mockAgentDiscovery);
 let browserStores = structuredClone(mockStores);
 let browserMemories = structuredClone(mockMemories);
+let browserConfiguredRoles = Object.fromEntries(mockAgentDiscovery.agents.map((agent) => [agent.id, agent.role])) as Record<string, AgentRole>;
+let browserConfigurationRevision = 1;
 
 export function resetBrowserBridgeForTests(): void {
   browserDiscovery = structuredClone(mockAgentDiscovery);
   browserStores = structuredClone(mockStores);
   browserMemories = structuredClone(mockMemories);
+  browserConfiguredRoles = Object.fromEntries(mockAgentDiscovery.agents.map((agent) => [agent.id, agent.role])) as Record<string, AgentRole>;
+  browserConfigurationRevision = 1;
 }
 
 export async function getStoreRegistry(): Promise<StoreSummary[]> {
@@ -182,4 +186,93 @@ export async function setAgentAccess(input: AccessUpdateInput): Promise<AccessUp
     writers: browserDiscovery.agents.filter((agent) => agent.role === "writer").map((agent) => agent.id),
     readers: browserDiscovery.agents.filter((agent) => agent.role === "reader").map((agent) => agent.id),
   };
+}
+
+function mockConfigurationFiles(agentId: string): ConfigurationFilePayload[] {
+  const agent = browserDiscovery.agents.find((candidate) => candidate.id === agentId);
+  if (!agent) return [];
+  const configuredRole = browserConfiguredRoles[agentId] ?? "none";
+  const roleChanged = configuredRole !== agent.role;
+  const rulePath = agent.configPaths.find((path) => !path.endsWith(".json")) ?? agent.configPaths[0];
+  const files: ConfigurationFilePayload[] = [];
+  if (rulePath) {
+    const action: ConfigurationAction = !agent.configured
+      ? "create"
+      : roleChanged || !agent.managed ? "update" : "unchanged";
+    files.push({
+      path: rulePath,
+      kind: "rules",
+      action,
+      beforeHash: agent.configured ? `mock-rules-${agentId}-${configuredRole}` : undefined,
+      afterHash: `mock-rules-${agentId}-${agent.role}`,
+    });
+  }
+  if (["codex", "claude-code"].includes(agentId)) {
+    const hookPath = agent.configPaths.find((path) => path.endsWith(".json"));
+    if (hookPath) {
+      if (agent.role === "writer") {
+        const action: ConfigurationAction = configuredRole === "writer" && agent.hookState === "active"
+          ? "unchanged" : "update";
+        files.push({
+          path: hookPath,
+          kind: "hooks",
+          action,
+          beforeHash: `mock-hooks-${agentId}-${configuredRole}`,
+          afterHash: `mock-hooks-${agentId}-writer`,
+        });
+      } else if (configuredRole === "writer" || ["active", "partial"].includes(agent.hookState)) {
+        files.push({
+          path: hookPath,
+          kind: "hooks",
+          action: "remove-managed",
+          beforeHash: `mock-hooks-${agentId}-${configuredRole}`,
+          afterHash: `mock-hooks-${agentId}-${agent.role}`,
+        });
+      }
+    }
+  }
+  return files;
+}
+
+export async function previewAgentConfiguration(agentId: string): Promise<ConfigurationPlanPayload | null> {
+  if (isTauriRuntime()) {
+    return invoke<ConfigurationPlanPayload | null>("preview_agent_configuration", { agentId });
+  }
+  const agent = browserDiscovery.agents.find((candidate) => candidate.id === agentId);
+  if (!agent || !["codex", "claude-code", "opencode", "openclaw"].includes(agentId)) return null;
+  return {
+    agentId,
+    role: agent.role === "none" ? null : agent.role,
+    files: mockConfigurationFiles(agentId),
+    warnings: [],
+    digest: `browser-config-${browserConfigurationRevision}-${agentId}-${agent.role}`,
+  };
+}
+
+export async function applyAgentConfiguration(
+  agentId: string,
+  digest: string,
+): Promise<ConfigurationApplyPayload> {
+  if (isTauriRuntime()) {
+    return invoke<ConfigurationApplyPayload>("apply_agent_configuration", { agentId, digest });
+  }
+  const current = await previewAgentConfiguration(agentId);
+  if (!current) throw new Error(`agent ${JSON.stringify(agentId)} has no Momonogi host adapter`);
+  if (current.digest !== digest) {
+    throw new Error("configuration preview is stale; refresh it before applying");
+  }
+  const changedFiles = current.files
+    .filter((file) => file.action !== "unchanged")
+    .map((file) => file.path);
+  const agent = browserDiscovery.agents.find((candidate) => candidate.id === agentId);
+  if (agent) {
+    browserConfiguredRoles[agentId] = agent.role;
+    agent.configured = true;
+    agent.managed = true;
+    if (["codex", "claude-code"].includes(agentId)) {
+      agent.hookState = agent.role === "writer" ? "active" : "missing";
+    }
+  }
+  browserConfigurationRevision += 1;
+  return { changedFiles, digest };
 }

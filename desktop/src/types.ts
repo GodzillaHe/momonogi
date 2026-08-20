@@ -45,6 +45,30 @@ export interface AccessUpdateInput {
   ifMatch: string;
 }
 
+export type ConfigurationFileKind = "rules" | "hooks";
+export type ConfigurationAction = "create" | "update" | "remove-managed" | "unchanged";
+
+export interface ConfigurationFilePayload {
+  path: string;
+  kind: ConfigurationFileKind;
+  action: ConfigurationAction;
+  beforeHash?: string;
+  afterHash: string;
+}
+
+export interface ConfigurationPlanPayload {
+  agentId: string;
+  role: Exclude<AgentRole, "none"> | null;
+  files: ConfigurationFilePayload[];
+  warnings: string[];
+  digest: string;
+}
+
+export interface ConfigurationApplyPayload {
+  changedFiles: string[];
+  digest: string;
+}
+
 export type StoreKind = "global" | "project";
 export type StoreHealth = "ready" | "missing" | "invalid";
 
