@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { agentCatalog } from "./agent-catalog";
-import { mockAgentDiscovery, mockStores } from "./mock-data";
-import type { AccessUpdateInput, AccessUpdatePayload, AgentDiscoveryPayload, BootstrapPayload, StoreSummary } from "./types";
+import { mockAgentDiscovery, mockMemories, mockMemoryBodies, mockStores } from "./mock-data";
+import type { AccessUpdateInput, AccessUpdatePayload, AgentDiscoveryPayload, BootstrapPayload, MemoryDetailPayload, MemoryIndexPayload, StoreSummary } from "./types";
 
 const browserPayload: BootstrapPayload = {
   appVersion: "0.1.0-dev",
@@ -46,6 +46,31 @@ export async function removeProjectStore(projectPath: string): Promise<StoreSumm
   }
   browserStores = browserStores.filter((store) => store.kind === "global" || store.path !== projectPath);
   return structuredClone(browserStores);
+}
+
+export async function getMemoryIndex(): Promise<MemoryIndexPayload> {
+  if (isTauriRuntime()) {
+    return invoke<MemoryIndexPayload>("get_memory_index", {
+      filter: { search: "", memoryTypes: [], statuses: [], scopes: [], archive: "all" },
+    });
+  }
+  return { notes: structuredClone(mockMemories), issues: [] };
+}
+
+export async function getMemoryDetail(
+  storePath: string,
+  slug: string,
+  archived: boolean,
+): Promise<MemoryDetailPayload> {
+  if (isTauriRuntime()) {
+    return invoke<MemoryDetailPayload>("get_memory_detail", { storePath, slug, archived });
+  }
+  const summary = mockMemories.find(
+    (memory) => memory.storePath === storePath && memory.slug === slug && memory.archived === archived,
+  );
+  if (!summary) throw new Error(`memory not found: ${slug}`);
+  const body = mockMemoryBodies[`${summary.storeId}:${summary.slug}`] ?? "";
+  return { summary: structuredClone(summary), body, content: `---\nname: ${summary.name}\n---\n\n${body}\n` };
 }
 
 function isTauriRuntime(): boolean {

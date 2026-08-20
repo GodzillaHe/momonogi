@@ -20,14 +20,16 @@ import { AgentLogo } from "./AgentLogo";
 import {
   getAgentDiscovery,
   getBootstrap,
+  getMemoryDetail,
+  getMemoryIndex,
   getStoreRegistry,
   registerProjectStore,
   removeProjectStore,
   setAgentAccess,
 } from "./bridge";
 import markUrl from "./assets/momonogi-mark.svg";
-import { mockMemories, mockTags } from "./mock-data";
-import type { AgentDiscoveryPayload, AgentRole, AgentSummary, BootstrapPayload, ManagedHookState, StoreSummary, ViewId } from "./types";
+import { mockTags } from "./mock-data";
+import type { AgentDiscoveryPayload, AgentRole, AgentSummary, BootstrapPayload, ManagedHookState, MemoryDetailPayload, MemoryIndexPayload, MemorySummary, StoreSummary, ViewId } from "./types";
 
 const views: Array<{ id: ViewId; label: string; icon: typeof UserRoundCog }> = [
   { id: "agents", label: "Agents", icon: UserRoundCog },
@@ -360,12 +362,94 @@ function AgentsView({
   );
 }
 
-function MemoriesView({ query }: { query: string }) {
-  const memories = mockMemories.filter((memory) =>
-    `${memory.title} ${memory.excerpt} ${memory.tags.join(" ")}`.toLowerCase().includes(query.toLowerCase()),
-  );
-  const [selectedSlug, setSelectedSlug] = useState(mockMemories[0].slug);
-  const selected = memories.find((memory) => memory.slug === selectedSlug) ?? memories[0];
+function memoryKey(memory: MemorySummary): string {
+  return `${memory.storePath}:${memory.archived ? "archive" : "active"}:${memory.slug}`;
+}
+
+function MemoriesView({
+  query,
+  index,
+  loading,
+  error,
+}: {
+  query: string;
+  index: MemoryIndexPayload | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  const [memoryType, setMemoryType] = useState("all");
+  const [status, setStatus] = useState("all");
+  const [scope, setScope] = useState("all");
+  const [archive, setArchive] = useState("all");
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [detail, setDetail] = useState<MemoryDetailPayload | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  const memories = useMemo(() => {
+    const search = query.trim().toLowerCase();
+    return (index?.notes ?? []).filter((memory) => {
+      if (memoryType !== "all" && memory.memoryType !== memoryType) return false;
+      if (status !== "all" && memory.status !== status) return false;
+      if (scope !== "all" && memory.scope !== scope) return false;
+      if (archive === "active" && memory.archived) return false;
+      if (archive === "archived" && !memory.archived) return false;
+      if (!search) return true;
+      return [memory.name, memory.description, memory.slug, memory.storeId, ...memory.tags]
+        .some((value) => value.toLowerCase().includes(search));
+    });
+  }, [archive, index?.notes, memoryType, query, scope, status]);
+
+  const selected = memories.find((memory) => memoryKey(memory) === selectedKey) ?? null;
+  const globalMemories = memories.filter((memory) => memory.storeKind === "global");
+  const projectMemories = memories.filter((memory) => memory.storeKind === "project");
+
+  useEffect(() => {
+    if (memories.length === 0) {
+      setSelectedKey(null);
+      setDetail(null);
+    } else if (!selected) {
+      setSelectedKey(memoryKey(memories[0]));
+    }
+  }, [memories, selected]);
+
+  useEffect(() => {
+    if (!selected) return;
+    let cancelled = false;
+    setDetail(null);
+    setDetailError(null);
+    void getMemoryDetail(selected.storePath, selected.slug, selected.archived)
+      .then((value) => {
+        if (!cancelled) setDetail(value);
+      })
+      .catch((cause) => {
+        if (!cancelled) setDetailError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
+
+  function rows(items: MemorySummary[]) {
+    return items.map((memory) => (
+      <button
+        className="memory-row"
+        data-active={selectedKey === memoryKey(memory)}
+        key={memoryKey(memory)}
+        type="button"
+        role="option"
+        aria-selected={selectedKey === memoryKey(memory)}
+        onClick={() => setSelectedKey(memoryKey(memory))}
+      >
+        <span className="memory-row__top"><strong>{memory.name}</strong><time>{memory.updated}</time></span>
+        <span className="memory-row__excerpt">{memory.description}</span>
+        <span className="memory-row__meta">
+          <span>{memory.storeId}</span>
+          <span>{memory.memoryType}</span>
+          <span>{memory.archived ? "archived" : memory.scope}</span>
+        </span>
+      </button>
+    ));
+  }
 
   return (
     <section className="view memories-view" aria-labelledby="memories-heading">
@@ -376,42 +460,50 @@ function MemoriesView({ query }: { query: string }) {
         </div>
         <span className="count-label">{memories.length} notes</span>
       </div>
+      <div className="memory-filters" aria-label="Memory filters">
+        <label>Type<select aria-label="Memory type" value={memoryType} onChange={(event) => setMemoryType(event.target.value)}><option value="all">All</option><option value="user">User</option><option value="feedback">Feedback</option><option value="project">Project</option><option value="reference">Reference</option></select></label>
+        <label>Status<select aria-label="Memory status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All</option><option value="active">Active</option><option value="archived">Archived</option></select></label>
+        <label>Scope<select aria-label="Memory scope" value={scope} onChange={(event) => setScope(event.target.value)}><option value="all">All</option><option value="global">Global</option><option value="repo">Repo</option></select></label>
+        <label>Archive<select aria-label="Archive state" value={archive} onChange={(event) => setArchive(event.target.value)}><option value="all">All</option><option value="active">Active only</option><option value="archived">Archived only</option></select></label>
+      </div>
+      {(error || (index?.issues.length ?? 0) > 0) && (
+        <div className="access-notice memory-issue" role="alert" title={index?.issues.map((issue) => `${issue.slug ?? issue.storePath}: ${issue.message}`).join("\n")}>
+          <CircleAlert aria-hidden="true" size={15} />
+          {error ?? `${index?.issues.length} memory item${index?.issues.length === 1 ? "" : "s"} could not be read.`}
+        </div>
+      )}
       <div className="memory-workbench">
         <div className="memory-list" role="listbox" aria-label="Memories">
-          {memories.map((memory) => (
-            <button
-              className="memory-row"
-              data-active={selected?.slug === memory.slug}
-              key={memory.slug}
-              type="button"
-              role="option"
-              aria-selected={selected?.slug === memory.slug}
-              onClick={() => setSelectedSlug(memory.slug)}
-            >
-              <span className="memory-row__top"><strong>{memory.title}</strong><time>{memory.updated}</time></span>
-              <span className="memory-row__excerpt">{memory.excerpt}</span>
-              <span className="memory-row__meta"><span>{memory.scope}</span><span>{memory.type}</span></span>
-            </button>
-          ))}
-          {memories.length === 0 && <EmptyState label="No memories match this search" />}
+          {globalMemories.length > 0 && <div className="memory-group" role="group" aria-label="Global"><h3>Global</h3>{rows(globalMemories)}</div>}
+          {projectMemories.length > 0 && <div className="memory-group" role="group" aria-label="Projects"><h3>Projects</h3>{rows(projectMemories)}</div>}
+          {memories.length === 0 && <EmptyState label={loading ? "Reading registered stores" : "No memories match these filters"} />}
         </div>
         <article className="memory-detail" aria-live="polite">
-          {selected ? (
+          {detail ? (
             <>
               <div className="memory-detail__head">
                 <div>
-                  <span>{selected.scope}{selected.project ? ` / ${selected.project}` : ""}</span>
-                  <h3>{selected.title}</h3>
+                  <span>{detail.summary.storeKind} / {detail.summary.storeId}</span>
+                  <h3>{detail.summary.name}</h3>
                 </div>
-                <code>{selected.slug}</code>
+                <code>{detail.summary.slug}</code>
               </div>
-              <p>{selected.excerpt}</p>
+              <div className="memory-detail__meta">
+                <span>{detail.summary.memoryType}</span>
+                <span>{detail.summary.status}</span>
+                <span>{detail.summary.scope}</span>
+                <span>r{detail.summary.revision}</span>
+              </div>
+              <p>{detail.summary.description}</p>
+              <pre className="memory-body">{detail.body}</pre>
               <div className="tag-line" aria-label="Tags">
-                {selected.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                {detail.summary.tags.map((tag) => <span key={tag}>{tag}</span>)}
               </div>
             </>
+          ) : detailError ? (
+            <div className="memory-detail-error" role="alert"><CircleAlert aria-hidden="true" size={18} /><p>{detailError}</p></div>
           ) : (
-            <EmptyState label="Select a memory to inspect" />
+            <EmptyState label={selected ? "Reading complete memory" : "Select a memory to inspect"} />
           )}
         </article>
       </div>
@@ -552,15 +644,19 @@ export function App() {
   const [stores, setStores] = useState<StoreSummary[]>([]);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [registryBusy, setRegistryBusy] = useState(false);
+  const [memoryIndex, setMemoryIndex] = useState<MemoryIndexPayload | null>(null);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
 
   const refreshData = useCallback(async () => {
     setRefreshing(true);
     setDiscoveryError(null);
     setRegistryError(null);
-    const [bootstrapResult, discoveryResult, registryResult] = await Promise.allSettled([
+    setMemoryError(null);
+    const [bootstrapResult, discoveryResult, registryResult, memoryResult] = await Promise.allSettled([
       getBootstrap(),
       getAgentDiscovery(),
       getStoreRegistry(),
+      getMemoryIndex(),
     ]);
     if (bootstrapResult.status === "fulfilled") setBootstrap(bootstrapResult.value);
     if (discoveryResult.status === "fulfilled") {
@@ -572,6 +668,11 @@ export function App() {
       setStores(registryResult.value);
     } else {
       setRegistryError(registryResult.reason instanceof Error ? registryResult.reason.message : String(registryResult.reason));
+    }
+    if (memoryResult.status === "fulfilled") {
+      setMemoryIndex(memoryResult.value);
+    } else {
+      setMemoryError(memoryResult.reason instanceof Error ? memoryResult.reason.message : String(memoryResult.reason));
     }
     setRefreshing(false);
   }, []);
@@ -613,6 +714,7 @@ export function App() {
     setRegistryError(null);
     try {
       setStores(await registerProjectStore(path));
+      setMemoryIndex(await getMemoryIndex());
       return true;
     } catch (cause) {
       setRegistryError(cause instanceof Error ? cause.message : String(cause));
@@ -627,6 +729,7 @@ export function App() {
     setRegistryError(null);
     try {
       setStores(await removeProjectStore(path));
+      setMemoryIndex(await getMemoryIndex());
     } catch (cause) {
       setRegistryError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -646,7 +749,7 @@ export function App() {
         onSetAccess={(agentId, role, actor) => void updateAccess(agentId, role, actor)}
       />
     );
-    if (active === "memories") return <MemoriesView query={query} />;
+    if (active === "memories") return <MemoriesView query={query} index={memoryIndex} loading={refreshing && !memoryIndex} error={memoryError} />;
     if (active === "tags") return <TagsView query={query} />;
     return (
       <SettingsView
@@ -658,7 +761,7 @@ export function App() {
         onRemove={removeStore}
       />
     );
-  }, [accessNotice, active, addProjectStore, agentDiscovery, bootstrap, discoveryError, query, refreshing, registryBusy, registryError, removeStore, savingAgentId, stores, updateAccess]);
+  }, [accessNotice, active, addProjectStore, agentDiscovery, bootstrap, discoveryError, memoryError, memoryIndex, query, refreshing, registryBusy, registryError, removeStore, savingAgentId, stores, updateAccess]);
 
   function changeView(view: ViewId) {
     setActive(view);

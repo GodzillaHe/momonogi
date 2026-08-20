@@ -145,6 +145,38 @@ fn remove_project_store(
     momonogi::registry::inspect_registry(&registry, &global).map_err(|error| error.to_string())
 }
 
+fn memory_sources(app: &tauri::AppHandle) -> Result<Vec<momonogi::explorer::StoreSource>, String> {
+    let registry = registry_path(app)?;
+    let global = momonogi::store::expand_path(momonogi::store::DEFAULT_GLOBAL_ROOT);
+    momonogi::explorer::registry_sources(&registry, &global).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_memory_index(
+    app: tauri::AppHandle,
+    filter: momonogi::explorer::MemoryFilter,
+) -> Result<momonogi::explorer::MemoryIndex, String> {
+    Ok(momonogi::explorer::index_memories(
+        &memory_sources(&app)?,
+        &filter,
+    ))
+}
+
+#[tauri::command]
+fn get_memory_detail(
+    app: tauri::AppHandle,
+    store_path: String,
+    slug: String,
+    archived: bool,
+) -> Result<momonogi::explorer::MemoryDetail, String> {
+    let requested = PathBuf::from(store_path);
+    let source = memory_sources(&app)?
+        .into_iter()
+        .find(|source| source.path == requested)
+        .ok_or_else(|| "memory store is not registered".to_owned())?;
+    momonogi::explorer::read_memory(&source, &slug, archived).map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -154,7 +186,9 @@ pub fn run() {
             set_agent_access,
             get_store_registry,
             register_project_store,
-            remove_project_store
+            remove_project_store,
+            get_memory_index,
+            get_memory_detail
         ])
         .run(tauri::generate_context!())
         .expect("error while running Momonogi Desktop");

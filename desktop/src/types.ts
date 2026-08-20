@@ -58,14 +58,37 @@ export interface StoreSummary {
 }
 
 export interface MemorySummary {
+  storeId: string;
+  storeKind: StoreKind;
+  storePath: string;
   slug: string;
-  title: string;
-  type: "user" | "feedback" | "project" | "reference";
-  scope: "global" | "project";
-  project?: string;
+  archived: boolean;
+  name: string;
+  description: string;
+  memoryType: "user" | "feedback" | "project" | "reference";
+  scope: string;
+  status: string;
   updated: string;
+  revision: number;
   tags: string[];
-  excerpt: string;
+  etag: string;
+}
+
+export interface MemoryIssue {
+  storePath: string;
+  slug?: string;
+  message: string;
+}
+
+export interface MemoryIndexPayload {
+  notes: MemorySummary[];
+  issues: MemoryIssue[];
+}
+
+export interface MemoryDetailPayload {
+  summary: MemorySummary;
+  body: string;
+  content: string;
 }
 
 export interface TagSummary {

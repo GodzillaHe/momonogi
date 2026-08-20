@@ -517,7 +517,7 @@ pub fn set_manifest_role(
     })
 }
 
-fn valid_slug(value: &str) -> bool {
+pub fn valid_slug(value: &str) -> bool {
     let bytes = value.as_bytes();
     value.ends_with(".md")
         && !value.eq_ignore_ascii_case(INDEX)

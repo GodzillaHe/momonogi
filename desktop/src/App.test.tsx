@@ -40,6 +40,31 @@ describe("Momonogi desktop shell", () => {
     expect(screen.queryByRole("option", { name: /Agent access policy/ })).not.toBeInTheDocument();
   });
 
+  it("groups stores and reads complete memory details", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Memories" }));
+
+    expect(await screen.findByRole("group", { name: "Global" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Projects" })).toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: /Momonogi Desktop/ }));
+    expect(await screen.findByText(/Momonogi Desktop manages Agent access/)).toBeInTheDocument();
+  });
+
+  it("combines metadata and archive filters", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Memories" }));
+    await screen.findByRole("option", { name: /Old layout decision/ });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Memory type" }), "feedback");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Memory scope" }), "repo");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Archive state" }), "archived");
+
+    expect(screen.getByRole("option", { name: /Old layout decision/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Interface preferences/ })).not.toBeInTheDocument();
+  });
+
   it("opens discovered Agent configuration details", async () => {
     const user = userEvent.setup();
     render(<App />);
