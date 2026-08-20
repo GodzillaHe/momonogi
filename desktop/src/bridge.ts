@@ -4,7 +4,7 @@ import { mockAgentDiscovery, mockMemories, mockMemoryBodies, mockStores } from "
 import type { AccessUpdateInput, AccessUpdatePayload, AgentDiscoveryPayload, AgentRole, BootstrapPayload, ConfigurationAction, ConfigurationApplyPayload, ConfigurationFilePayload, ConfigurationPlanPayload, MemoryDetailPayload, MemoryIndexPayload, StoreSummary, TagMutationPayload } from "./types";
 
 const browserPayload: BootstrapPayload = {
-  appVersion: "0.0.1-alpha.1",
+  appVersion: "0.0.1-alpha.2",
   coreSchema: 1,
   bridge: "browser",
 };

@@ -38,18 +38,19 @@ file src-tauri/target/release/bundle/macos/Momonogi.app/Contents/MacOS/momo
 src-tauri/target/release/bundle/macos/Momonogi.app/Contents/MacOS/momo --version
 ```
 
-## Publish an unsigned DMG on GitHub
+## Publish a certificate-free DMG on GitHub
 
-The `unsigned macOS DMG` workflow builds an Apple Silicon DMG, creates or
+The `macOS DMG` workflow builds an Apple Silicon DMG, creates or
 updates the matching GitHub Release, and uploads both the DMG and its SHA-256
-checksum. It does not use Apple certificates or repository secrets.
+checksum. The app uses an ad-hoc signature for bundle integrity, without Apple
+Developer certificates, notarization credentials, or repository secrets.
 
 The Git tag must match the desktop version in `desktop/src-tauri/tauri.conf.json`.
-For version `0.0.1-alpha.1`, publish with:
+For version `0.0.1-alpha.2`, publish with:
 
 ```sh
-git tag v0.0.1-alpha.1
-git push origin v0.0.1-alpha.1
+git tag v0.0.1-alpha.2
+git push origin v0.0.1-alpha.2
 ```
 
 The tag push starts `.github/workflows/release.yml`. The workflow can also be
@@ -60,23 +61,31 @@ created under:
 desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/
 ```
 
-Build the same unsigned DMG locally on Apple Silicon with:
+Build the same ad-hoc signed DMG locally on Apple Silicon with:
 
 ```sh
 cd desktop
 MOMONOGI_TARGET=aarch64-apple-darwin \
-  pnpm tauri build --target aarch64-apple-darwin --bundles dmg --no-sign --ci
+  pnpm tauri build --target aarch64-apple-darwin --bundles dmg --ci
 ```
 
-Because the DMG is unsigned and not notarized, macOS may require users to
-Control-click Momonogi and choose Open on first launch. The release checksum
-verifies the download but does not replace code signing.
+Because the DMG is not signed with a trusted Developer ID and is not notarized,
+macOS may require users to Control-click Momonogi and choose Open on first
+launch. If Gatekeeper reports that the app is damaged, move it to Applications
+and remove quarantine only after verifying the SHA-256 checksum:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Momonogi.app
+```
+
+The release checksum verifies the download but does not establish developer
+identity.
 
 ## Install locally
 
-Move `Momonogi.app` to `/Applications` and launch it. A locally built bundle is
-unsigned; macOS may require the usual Control-click and Open flow. Do not remove
-quarantine flags from an app obtained from someone you do not trust.
+Move `Momonogi.app` to `/Applications` and launch it. macOS may require the usual
+Control-click and Open flow. Do not remove quarantine flags from an app obtained
+from someone you do not trust.
 
 The embedded CLI is used by configuration previews and generated lifecycle
 hooks. To use `momo` directly in a terminal, install the same source revision:
@@ -99,7 +108,7 @@ repository or package them inside the application.
 
 ## Release signing
 
-The unsigned workflow is suitable for personal distribution and early testing.
+The ad-hoc signed workflow is suitable for personal distribution and early testing.
 A warning-free public release still requires an Apple Developer ID,
 hardened-runtime signing, and notarization. Those credentials are intentionally
 not stored in the repository.
