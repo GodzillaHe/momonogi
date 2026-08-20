@@ -1,9 +1,5 @@
-mod configure;
-mod lifecycle;
-mod logo;
-mod store;
-
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use momonogi::{configure, lifecycle, logo, store};
 use serde_json::json;
 use std::fs;
 use std::io::Write;
