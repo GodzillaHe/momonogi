@@ -38,6 +38,40 @@ file src-tauri/target/release/bundle/macos/Momonogi.app/Contents/MacOS/momo
 src-tauri/target/release/bundle/macos/Momonogi.app/Contents/MacOS/momo --version
 ```
 
+## Publish an unsigned DMG on GitHub
+
+The `unsigned macOS DMG` workflow builds an Apple Silicon DMG, creates or
+updates the matching GitHub Release, and uploads both the DMG and its SHA-256
+checksum. It does not use Apple certificates or repository secrets.
+
+The Git tag must match the desktop version in `desktop/src-tauri/tauri.conf.json`.
+For version `0.1.0`, publish with:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The tag push starts `.github/workflows/release.yml`. The workflow can also be
+run manually from the Actions page for an existing tag. Its arm64 output is
+created under:
+
+```text
+desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/
+```
+
+Build the same unsigned DMG locally on Apple Silicon with:
+
+```sh
+cd desktop
+MOMONOGI_TARGET=aarch64-apple-darwin \
+  pnpm tauri build --target aarch64-apple-darwin --bundles dmg --no-sign --ci
+```
+
+Because the DMG is unsigned and not notarized, macOS may require users to
+Control-click Momonogi and choose Open on first launch. The release checksum
+verifies the download but does not replace code signing.
+
 ## Install locally
 
 Move `Momonogi.app` to `/Applications` and launch it. A locally built bundle is
@@ -65,7 +99,7 @@ repository or package them inside the application.
 
 ## Release signing
 
-The local build is suitable for personal deployment. A public release still
-requires an Apple Developer ID, hardened-runtime signing, notarization, and a
-published checksum. Those credentials are intentionally not stored in the
-repository.
+The unsigned workflow is suitable for personal distribution and early testing.
+A warning-free public release still requires an Apple Developer ID,
+hardened-runtime signing, and notarization. Those credentials are intentionally
+not stored in the repository.
