@@ -56,6 +56,9 @@ momo configure \
 `~/.claude/settings.json`；Codex Hook 是项目级配置，因此每个需要 Hook 的仓库都要传
 `--codex-project`。`--no-hooks` 可以只安装规则。其他规则和 Hook 处理器会被保留。
 
+OpenClaw 工作区规则会按当前宿主生效，避免共享的项目级 `AGENTS.md` 把 Codex 从
+写入者错误降级为只读者。
+
 ## 命令
 
 | 命令 | 用途 |

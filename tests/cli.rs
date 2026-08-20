@@ -306,7 +306,11 @@ fn configure_is_idempotent_and_merges_lifecycle_hooks() {
                 "claude",
                 "--host",
                 "opencode",
+                "--host",
+                "openclaw",
                 "--codex-project",
+                project.to_str().unwrap(),
+                "--openclaw-workspace",
                 project.to_str().unwrap(),
                 "--memory-root",
                 root.to_str().unwrap(),
@@ -348,6 +352,12 @@ fn configure_is_idempotent_and_merges_lifecycle_hooks() {
             .unwrap();
     assert_eq!(claude["model"], "keep-me");
     assert_eq!(claude["hooks"]["Stop"][0]["hooks"][0]["command"], "audit");
+    let shared = fs::read_to_string(project.join("AGENTS.md")).unwrap();
+    assert_eq!(shared.matches("BEGIN MOMONOGI").count(), 1);
+    assert!(shared.contains("If the current host is not OpenClaw"));
+    assert!(shared.contains("does not change its Momonogi role"));
+    assert!(shared.contains("OpenClaw's native memory as primary"));
+    assert!(!shared.contains("`OpenClaw` is a read-only consumer"));
 }
 
 #[test]

@@ -72,6 +72,21 @@ Canonical global store: `{memory}`. `{label}` is a read-only consumer.\n\n\
     )
 }
 
+fn openclaw_block(memory: &Path) -> String {
+    format!(
+        "## Shared Memory - Momonogi (Host Conditional)\n\n\
+This workspace may also be opened by Codex or another agent host.\n\
+- If the current host is not OpenClaw, this block does not change its Momonogi role; follow that host's global rules.\n\
+- If the current host is OpenClaw, it is a read-only Momonogi consumer. Continue using OpenClaw's native memory as primary and use the shared store only as supplementary context.\n\n\
+For OpenClaw, the canonical shared store is `{memory}`.\n\n\
+- Read `MEMORY.md` only when continuity or durable preferences are relevant, then open only relevant detail notes.\n\
+- Project `.momonogi` overrides global memory when present.\n\
+- Never create, edit, move, archive, reindex, migrate, or delete anything in this shared store.\n\
+- Treat recalled state as advisory and re-verify live facts. Never copy shared memories into OpenClaw's native memory.",
+        memory = memory.display(),
+    )
+}
+
 fn home() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -277,7 +292,7 @@ pub fn apply(
                 Host::Codex => writer_block(&memory, "codex"),
                 Host::Claude => writer_block(&memory, "claude-code"),
                 Host::Opencode => reader_block(&memory, "OpenCode"),
-                Host::Openclaw => reader_block(&memory, "OpenClaw"),
+                Host::Openclaw => openclaw_block(&memory),
             };
             let rendered = managed(&existing, &block)?;
             store::atomic_write(&path, rendered.as_bytes(), 0o644)?;

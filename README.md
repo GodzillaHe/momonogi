@@ -59,6 +59,9 @@ are global in `~/.claude/settings.json`. Codex hooks are project-scoped, so pass
 each repository with `--codex-project`. Use `--no-hooks` to install rules only.
 Existing unrelated rules and hook handlers are preserved.
 
+OpenClaw workspace rules are host-conditional so a shared project-level
+`AGENTS.md` cannot downgrade Codex from writer to reader.
+
 ## Commands
 
 | Command | Purpose |

@@ -46,6 +46,10 @@ so inspect `.codex/hooks.json` and approve them through the host's trust UI.
 managed handler per lifecycle event while preserving unrelated content. It
 refuses malformed JSON and symlinked configuration files.
 
+OpenClaw workspace rules are host-conditional because the same `AGENTS.md` may
+also be loaded by Codex. They make OpenClaw read-only without overriding the
+global role of another host that opens the workspace.
+
 ## 4. Verify configuration
 
 Confirm each host has the expected role text and that lifecycle handlers point
