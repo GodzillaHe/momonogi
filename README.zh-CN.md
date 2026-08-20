@@ -118,7 +118,8 @@ Agent 安装和信任检查见 [docs/AGENT_SETUP.md](docs/AGENT_SETUP.md)。可�
 
 Momonogi Desktop 可以发现本机 Agent、管理仓库角色、在应用规则和 Hook 变更前预览
 差异，并浏览全局及已登记项目中的记忆和标签。应用内置匹配版本的 `momo` sidecar，供
-生命周期 Hook 调用。
+生命周期 Hook 调用。界面支持英文和简体中文，首次启动时跟随系统语言，之后会记住用户
+选择的语言。
 
 当前桌面预发布版本为 `0.0.1-alpha.2`，支持 Apple Silicon Mac。打开
 [GitHub Releases](https://github.com/GodzillaHe/momonogi/releases)，下载：

@@ -48,6 +48,25 @@ describe("Momonogi desktop shell", () => {
     expect(await screen.findByText("Development bridge")).toBeInTheDocument();
   });
 
+  it("switches between Chinese and English and persists the choice", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent access" });
+
+    await user.click(screen.getByRole("button", { name: "Switch to Chinese" }));
+
+    expect(await screen.findByRole("heading", { name: "Agent 权限" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "记忆" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "搜索 Agent" })).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute("lang", "zh-CN");
+    expect(window.localStorage.getItem("momonogi.language")).toBe("zh-CN");
+
+    await user.click(screen.getByRole("button", { name: "切换到英文" }));
+    expect(await screen.findByRole("heading", { name: "Agent access" })).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute("lang", "en");
+    expect(window.localStorage.getItem("momonogi.language")).toBe("en");
+  });
+
   it("switches views and clears the current search", async () => {
     const user = userEvent.setup();
     render(<App />);

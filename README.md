@@ -126,7 +126,9 @@ For Agent-focused installation and trust checks, see
 Momonogi Desktop discovers local Agent hosts, manages their store roles,
 previews host rule and hook changes before applying them, and browses global
 and registered project memories and tags. It bundles a matching `momo` sidecar
-for generated lifecycle hooks.
+for generated lifecycle hooks. The interface supports English and Simplified
+Chinese, follows the system language on first launch, and remembers later
+language changes.
 
 The current desktop prerelease is `0.0.1-alpha.2` for Apple Silicon Macs. Open
 [GitHub Releases](https://github.com/GodzillaHe/momonogi/releases) and download:

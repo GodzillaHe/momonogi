@@ -18,9 +18,11 @@
     "@fontsource/jetbrains-mono": "^5.2.6",
     "@lobehub/icons-static-svg": "1.94.0",
     "@tauri-apps/api": "^2.8.0",
+    "i18next": "^26.4.0",
     "lucide-react": "^0.468.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "react-i18next": "^17.0.12"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.4",
