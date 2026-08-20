@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 
@@ -7,7 +7,7 @@ describe("Momonogi desktop shell", () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "Access matrix" })).toBeInTheDocument();
-    expect(screen.getByText("Claude Code")).toBeInTheDocument();
+    expect(await screen.findByText("Claude Code")).toBeInTheDocument();
     expect(await screen.findByText("Development bridge")).toBeInTheDocument();
   });
 
@@ -33,5 +33,19 @@ describe("Momonogi desktop shell", () => {
 
     expect(screen.getByRole("option", { name: /Momonogi Desktop/ })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Agent access policy/ })).not.toBeInTheDocument();
+  });
+
+  it("opens discovered Agent configuration details", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Claude Code");
+
+    await user.click(screen.getByRole("button", { name: "Open Claude Code" }));
+
+    const inspector = screen.getByRole("complementary", { name: "Claude Code" });
+    expect(within(inspector).getByText("Configuration paths")).toBeInTheDocument();
+    expect(within(inspector).getByText("~/.claude/settings.json")).toBeInTheDocument();
+    expect(within(inspector).getByText("Hooks active")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close Agent details" })).toBeInTheDocument();
   });
 });

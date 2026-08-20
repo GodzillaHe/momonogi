@@ -13,12 +13,12 @@ import {
   UserRoundCog,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AgentLogo } from "./AgentLogo";
-import { getBootstrap } from "./bridge";
+import { getAgentDiscovery, getBootstrap } from "./bridge";
 import markUrl from "./assets/momonogi-mark.svg";
-import { mockAgents, mockMemories, mockTags } from "./mock-data";
-import type { AgentRole, BootstrapPayload, ViewId } from "./types";
+import { mockMemories, mockTags } from "./mock-data";
+import type { AgentDiscoveryPayload, AgentRole, AgentSummary, BootstrapPayload, ManagedHookState, ViewId } from "./types";
 
 const views: Array<{ id: ViewId; label: string; icon: typeof UserRoundCog }> = [
   { id: "agents", label: "Agents", icon: UserRoundCog },
@@ -38,6 +38,21 @@ function roleLabel(role: AgentRole): string {
   if (role === "writer") return "Writer";
   if (role === "reader") return "Reader";
   return "No access";
+}
+
+function hookLabel(state: ManagedHookState): string {
+  if (state === "active") return "Hooks active";
+  if (state === "partial") return "Hooks partial";
+  if (state === "invalid") return "Hooks invalid";
+  if (state === "missing") return "Hooks off";
+  return "Not applicable";
+}
+
+function configLabel(agent: AgentSummary): string {
+  if (agent.configIssue) return "Config issue";
+  if (agent.managed) return "Managed";
+  if (agent.configured) return "Config found";
+  return "Not configured";
 }
 
 function Brand() {
@@ -82,10 +97,14 @@ function Toolbar({
   active,
   query,
   setQuery,
+  onRefresh,
+  refreshing,
 }: {
   active: ViewId;
   query: string;
   setQuery: (query: string) => void;
+  onRefresh: () => void;
+  refreshing: boolean;
 }) {
   const current = viewTitles[active];
   return (
@@ -111,19 +130,80 @@ function Toolbar({
           )}
         </label>
       )}
-      <button className="icon-button toolbar__refresh" type="button" aria-label="Refresh" title="Refresh">
+      <button
+        className="icon-button toolbar__refresh"
+        type="button"
+        aria-label="Refresh"
+        aria-busy={refreshing}
+        title={refreshing ? "Refreshing" : "Refresh"}
+        disabled={refreshing}
+        onClick={onRefresh}
+      >
         <RefreshCw aria-hidden="true" size={18} />
       </button>
     </header>
   );
 }
 
-function AgentsView({ query }: { query: string }) {
-  const agents = mockAgents.filter((agent) =>
+function AgentInspector({ agent, onClose }: { agent: AgentSummary; onClose: () => void }) {
+  return (
+    <aside className="store-inspector agent-inspector" aria-labelledby="agent-inspector-heading">
+      <div className="store-inspector__head">
+        <AgentLogo agentId={agent.id} name={agent.name} command={agent.command} />
+        <h3 id="agent-inspector-heading">{agent.name}</h3>
+        <button className="icon-button inspector-close" type="button" aria-label="Close Agent details" title="Close" onClick={onClose}>
+          <X aria-hidden="true" size={16} />
+        </button>
+      </div>
+      <dl>
+        <div><dt>Command</dt><dd><code>{agent.command || "-"}</code></dd></div>
+        <div><dt>Installed</dt><dd>{agent.installed ? "Yes" : "No"}</dd></div>
+        <div><dt>Access</dt><dd>{roleLabel(agent.role)}</dd></div>
+        <div><dt>Rules</dt><dd>{configLabel(agent)}</dd></div>
+        <div><dt>Hooks</dt><dd>{hookLabel(agent.hookState)}</dd></div>
+      </dl>
+      <div className="config-paths">
+        <span>Configuration paths</span>
+        {agent.configPaths.length > 0 ? agent.configPaths.map((path) => <code key={path} title={path}>{path}</code>) : <p>No host adapter paths</p>}
+      </div>
+      {agent.configIssue && <p className="config-issue"><CircleAlert aria-hidden="true" size={14} />{agent.configIssue}</p>}
+    </aside>
+  );
+}
+
+function StoreInspector({ discovery }: { discovery: AgentDiscoveryPayload | null }) {
+  return (
+    <aside className="store-inspector" aria-labelledby="active-store-heading">
+      <div className="store-inspector__head">
+        <Database aria-hidden="true" size={18} />
+        <h3 id="active-store-heading">Active store</h3>
+      </div>
+      <dl>
+        <div><dt>Scope</dt><dd>Global</dd></div>
+        <div><dt>Health</dt><dd><span className="status-dot" data-state={discovery?.storeAvailable === false ? "warning" : undefined} />{discovery?.storeAvailable === false ? "Unavailable" : "Ready"}</dd></div>
+        <div><dt>Schema</dt><dd><code>v1</code></dd></div>
+        <div><dt>Revision</dt><dd><code>{discovery?.storeRevision ?? "-"}</code></dd></div>
+        <div><dt>Root</dt><dd><code className="path-value" title={discovery?.storeRoot}>{discovery?.storeRoot ?? "loading"}</code></dd></div>
+      </dl>
+      {discovery?.storeIssue && <p className="config-issue"><CircleAlert aria-hidden="true" size={14} />{discovery.storeIssue}</p>}
+      <button className="secondary-button" type="button">
+        <FolderOpen aria-hidden="true" size={16} />
+        Open folder
+      </button>
+    </aside>
+  );
+}
+
+function AgentsView({ query, discovery, loading, error }: { query: string; discovery: AgentDiscoveryPayload | null; loading: boolean; error: string | null }) {
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const allAgents = discovery?.agents ?? [];
+  const agents = allAgents.filter((agent) =>
     `${agent.name} ${agent.id} ${agent.command}`.toLowerCase().includes(query.toLowerCase()),
   );
-  const writers = mockAgents.filter((agent) => agent.role === "writer").length;
-  const readers = mockAgents.filter((agent) => agent.role === "reader").length;
+  const writers = allAgents.filter((agent) => agent.role === "writer").length;
+  const readers = allAgents.filter((agent) => agent.role === "reader").length;
+  const installed = allAgents.filter((agent) => agent.installed).length;
+  const selectedAgent = allAgents.find((agent) => agent.id === selectedAgentId);
 
   return (
     <section className="view agents-view" aria-labelledby="agents-heading">
@@ -139,10 +219,10 @@ function AgentsView({ query }: { query: string }) {
       </div>
 
       <div className="metric-strip" aria-label="Agent summary">
-        <div><strong>{mockAgents.length}</strong><span>Detected</span></div>
+        <div><strong>{allAgents.length}</strong><span>Detected</span></div>
         <div><strong>{writers}</strong><span>Writers</span></div>
         <div><strong>{readers}</strong><span>Readers</span></div>
-        <div><strong>4 / 4</strong><span>Online</span></div>
+        <div><strong>{installed} / {allAgents.length}</strong><span>Installed</span></div>
       </div>
 
       <div className="workbench-grid">
@@ -159,38 +239,28 @@ function AgentsView({ query }: { query: string }) {
               <div className="agent-row__signals">
                 <span className="signal" data-state={agent.installed ? "ok" : "off"}>
                   {agent.installed ? <Check aria-hidden="true" size={13} /> : <X aria-hidden="true" size={13} />}
-                  Installed
+                  {agent.installed ? "Installed" : "Not installed"}
                 </span>
-                <span className="signal" data-state={agent.managed ? "ok" : "quiet"}>
+                <span className="signal" data-state={agent.managed ? "ok" : agent.configured ? "quiet" : "off"} title={agent.configIssue}>
                   {agent.managed ? <ShieldCheck aria-hidden="true" size={13} /> : <CircleAlert aria-hidden="true" size={13} />}
-                  {agent.managed ? "Managed" : "Unmanaged"}
+                  {configLabel(agent)}
                 </span>
+                {agent.hookState !== "not-applicable" && (
+                  <span className="signal" data-state={agent.hookState === "active" ? "ok" : "quiet"}>
+                    {agent.hookState === "active" ? <Check aria-hidden="true" size={13} /> : <CircleAlert aria-hidden="true" size={13} />}
+                    {hookLabel(agent.hookState)}
+                  </span>
+                )}
               </div>
               <span className="role-badge" data-role={agent.role}>{roleLabel(agent.role)}</span>
-              <button className="icon-button" type="button" aria-label={`Open ${agent.name}`} title={`Open ${agent.name}`}>
+              <button className="icon-button" type="button" aria-label={`Open ${agent.name}`} title={`Open ${agent.name}`} onClick={() => setSelectedAgentId(agent.id)}>
                 <ChevronRight aria-hidden="true" size={17} />
               </button>
             </article>
           ))}
-          {agents.length === 0 && <EmptyState label="No Agents match this search" />}
+          {agents.length === 0 && <EmptyState label={loading ? "Scanning local Agents" : error ? "Agent discovery failed" : "No Agents match this search"} />}
         </div>
-
-        <aside className="store-inspector" aria-labelledby="active-store-heading">
-          <div className="store-inspector__head">
-            <Database aria-hidden="true" size={18} />
-            <h3 id="active-store-heading">Active store</h3>
-          </div>
-          <dl>
-            <div><dt>Scope</dt><dd>Global</dd></div>
-            <div><dt>Health</dt><dd><span className="status-dot" />Ready</dd></div>
-            <div><dt>Schema</dt><dd><code>v1</code></dd></div>
-            <div><dt>Revision</dt><dd><code>24</code></dd></div>
-          </dl>
-          <button className="secondary-button" type="button">
-            <FolderOpen aria-hidden="true" size={16} />
-            Open folder
-          </button>
-        </aside>
+        {selectedAgent ? <AgentInspector agent={selectedAgent} onClose={() => setSelectedAgentId(null)} /> : <StoreInspector discovery={discovery} />}
       </div>
     </section>
   );
@@ -312,17 +382,33 @@ export function App() {
   const [active, setActive] = useState<ViewId>("agents");
   const [query, setQuery] = useState("");
   const [bootstrap, setBootstrap] = useState<BootstrapPayload | null>(null);
+  const [agentDiscovery, setAgentDiscovery] = useState<AgentDiscoveryPayload | null>(null);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    void getBootstrap().then(setBootstrap);
+  const refreshData = useCallback(async () => {
+    setRefreshing(true);
+    setDiscoveryError(null);
+    const [bootstrapResult, discoveryResult] = await Promise.allSettled([getBootstrap(), getAgentDiscovery()]);
+    if (bootstrapResult.status === "fulfilled") setBootstrap(bootstrapResult.value);
+    if (discoveryResult.status === "fulfilled") {
+      setAgentDiscovery(discoveryResult.value);
+    } else {
+      setDiscoveryError(discoveryResult.reason instanceof Error ? discoveryResult.reason.message : String(discoveryResult.reason));
+    }
+    setRefreshing(false);
   }, []);
 
+  useEffect(() => {
+    void refreshData();
+  }, [refreshData]);
+
   const content = useMemo(() => {
-    if (active === "agents") return <AgentsView query={query} />;
+    if (active === "agents") return <AgentsView query={query} discovery={agentDiscovery} loading={refreshing && !agentDiscovery} error={discoveryError} />;
     if (active === "memories") return <MemoriesView query={query} />;
     if (active === "tags") return <TagsView query={query} />;
     return <SettingsView bootstrap={bootstrap} />;
-  }, [active, bootstrap, query]);
+  }, [active, agentDiscovery, bootstrap, discoveryError, query, refreshing]);
 
   function changeView(view: ViewId) {
     setActive(view);
@@ -333,7 +419,7 @@ export function App() {
     <div className="app-shell">
       <SideRail active={active} onChange={changeView} />
       <div className="app-shell__main">
-        <Toolbar active={active} query={query} setQuery={setQuery} />
+        <Toolbar active={active} query={query} setQuery={setQuery} onRefresh={() => void refreshData()} refreshing={refreshing} />
         <main>{content}</main>
         <footer className="status-line">
           <span><span className="status-dot" aria-hidden="true" />{bootstrap?.bridge === "desktop" ? "Desktop bridge" : "Development bridge"}</span>

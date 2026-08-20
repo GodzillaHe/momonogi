@@ -1,5 +1,6 @@
 export type ViewId = "agents" | "memories" | "tags" | "settings";
 export type AgentRole = "writer" | "reader" | "none";
+export type ManagedHookState = "active" | "partial" | "missing" | "invalid" | "not-applicable";
 
 export interface BootstrapPayload {
   appVersion: string;
@@ -13,7 +14,19 @@ export interface AgentSummary {
   command: string;
   role: AgentRole;
   installed: boolean;
+  configured: boolean;
   managed: boolean;
+  hookState: ManagedHookState;
+  configPaths: string[];
+  configIssue?: string;
+}
+
+export interface AgentDiscoveryPayload {
+  agents: AgentSummary[];
+  storeRoot: string;
+  storeAvailable: boolean;
+  storeRevision?: number;
+  storeIssue?: string;
 }
 
 export interface MemorySummary {

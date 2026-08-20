@@ -1,11 +1,18 @@
-import type { AgentSummary, MemorySummary, TagSummary } from "./types";
+import type { AgentDiscoveryPayload, AgentSummary, MemorySummary, TagSummary } from "./types";
 
 export const mockAgents: AgentSummary[] = [
-  { id: "codex", name: "Codex", command: "codex", role: "writer", installed: true, managed: true },
-  { id: "claude-code", name: "Claude Code", command: "claude", role: "writer", installed: true, managed: true },
-  { id: "opencode", name: "OpenCode", command: "opencode", role: "reader", installed: true, managed: false },
-  { id: "openclaw", name: "OpenClaw", command: "openclaw", role: "reader", installed: true, managed: true },
+  { id: "codex", name: "Codex", command: "codex", role: "writer", installed: true, configured: true, managed: true, hookState: "active", configPaths: ["~/.codex/AGENTS.md", "./.codex/hooks.json"] },
+  { id: "claude-code", name: "Claude Code", command: "claude", role: "writer", installed: true, configured: true, managed: true, hookState: "active", configPaths: ["~/.claude/CLAUDE.md", "~/.claude/settings.json"] },
+  { id: "opencode", name: "OpenCode", command: "opencode", role: "reader", installed: true, configured: true, managed: false, hookState: "not-applicable", configPaths: ["~/.config/opencode/AGENTS.md"] },
+  { id: "openclaw", name: "OpenClaw", command: "openclaw", role: "reader", installed: true, configured: true, managed: true, hookState: "not-applicable", configPaths: ["~/Documents/openclaw/AGENTS.md"] },
 ];
+
+export const mockAgentDiscovery: AgentDiscoveryPayload = {
+  agents: mockAgents,
+  storeRoot: "~/.local/share/momonogi/store",
+  storeAvailable: true,
+  storeRevision: 24,
+};
 
 export const mockMemories: MemorySummary[] = [
   {
