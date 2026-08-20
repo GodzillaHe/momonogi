@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 description = "Local shared memory for multiple AI agents"
-repository = "https://github.com/coolcoolcool/azusa"
+repository = "https://github.com/GodzillaHe/momonogi"
 
 [[bin]]
 name = "momo"

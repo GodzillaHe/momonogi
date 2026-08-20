@@ -15,11 +15,9 @@ Momonogi 是一个供多个 AI Agent 共用的本地文件式记忆系统，发�
 需要 Rust 1.85 或更高版本。
 
 ```sh
-cargo install --path tools/momonogi --locked --force
+cargo install --path . --locked --force
 momo --version
 ```
-
-如果当前就在本目录，使用 `cargo install --path . --locked --force`。
 
 新建全局记忆库：
 

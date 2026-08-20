@@ -16,11 +16,9 @@ ships as one Rust binary named `momo`.
 Rust 1.85 or newer is required.
 
 ```sh
-cargo install --path tools/momonogi --locked --force
+cargo install --path . --locked --force
 momo --version
 ```
-
-When running from this directory, use `cargo install --path . --locked --force`.
 
 Create a new global store:
 
