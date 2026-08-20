@@ -1,6 +1,6 @@
 [package]
 name = "momonogi-desktop"
-version = "0.1.0"
+version = "0.0.1-alpha.1"
 description = "Desktop manager for Momonogi"
 authors = ["Momonogi contributors"]
 edition = "2024"

@@ -45,11 +45,11 @@ updates the matching GitHub Release, and uploads both the DMG and its SHA-256
 checksum. It does not use Apple certificates or repository secrets.
 
 The Git tag must match the desktop version in `desktop/src-tauri/tauri.conf.json`.
-For version `0.1.0`, publish with:
+For version `0.0.1-alpha.1`, publish with:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.0.1-alpha.1
+git push origin v0.0.1-alpha.1
 ```
 
 The tag push starts `.github/workflows/release.yml`. The workflow can also be
