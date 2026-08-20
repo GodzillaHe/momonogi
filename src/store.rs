@@ -60,7 +60,8 @@ pub struct Manifest {
     pub updated_at: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AccessRole {
     Writer,
     Reader,
@@ -70,6 +71,12 @@ pub enum AccessRole {
 pub struct LoadedManifest {
     pub manifest: Manifest,
     pub etag: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct AccessMutation {
+    pub loaded: LoadedManifest,
+    pub changed: bool,
 }
 
 fn default_manifest_revision() -> u64 {
@@ -447,7 +454,70 @@ pub fn assert_writer(manifest: &Manifest, agent: &str) -> Result<()> {
     }
 }
 
-fn valid_slug(value: &str) -> bool {
+pub fn assert_manifest_etag(actual: &str, expected: &str) -> Result<()> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(Error(format!(
+            "manifest etag conflict: expected {expected}, current {actual}"
+        )))
+    }
+}
+
+pub fn set_manifest_role(
+    root: &Path,
+    agent: &str,
+    desired: Option<AccessRole>,
+    actor: &str,
+    if_match: &str,
+) -> Result<AccessMutation> {
+    if !valid_agent_id(agent) {
+        return Err(Error(format!("invalid agent id: {agent:?}")));
+    }
+
+    let _lock = lock_store(root)?;
+    let mut loaded = load_manifest(root)?;
+    assert_writer(&loaded.manifest, actor)?;
+    assert_manifest_etag(&loaded.etag, if_match)?;
+
+    let current = manifest_role(&loaded.manifest, agent);
+    if current == desired {
+        return Ok(AccessMutation {
+            loaded,
+            changed: false,
+        });
+    }
+    if current == Some(AccessRole::Writer)
+        && loaded.manifest.writers.len() == 1
+        && desired != Some(AccessRole::Writer)
+    {
+        let action = if desired == Some(AccessRole::Reader) {
+            "downgrade"
+        } else {
+            "revoke"
+        };
+        return Err(Error(format!("cannot {action} the final writer")));
+    }
+
+    loaded.manifest.writers.retain(|value| value != agent);
+    loaded.manifest.readers.retain(|value| value != agent);
+    match desired {
+        Some(AccessRole::Writer) => loaded.manifest.writers.push(agent.to_owned()),
+        Some(AccessRole::Reader) => loaded.manifest.readers.push(agent.to_owned()),
+        None => {}
+    }
+    loaded.manifest.writers.sort();
+    loaded.manifest.readers.sort();
+    touch_manifest(&mut loaded.manifest, actor);
+    loaded.etag = write_manifest(root, &loaded.manifest)?;
+
+    Ok(AccessMutation {
+        loaded,
+        changed: true,
+    })
+}
+
+pub fn valid_slug(value: &str) -> bool {
     let bytes = value.as_bytes();
     value.ends_with(".md")
         && !value.eq_ignore_ascii_case(INDEX)

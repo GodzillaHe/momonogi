@@ -119,6 +119,16 @@ For Agent-focused installation and trust checks, see
 [docs/AGENT_SETUP.md](docs/AGENT_SETUP.md). The reusable Agent protocol lives in
 [skill/SKILL.md](skill/SKILL.md).
 
+## Desktop app
+
+The optional Tauri desktop workbench discovers local Agent hosts, manages their
+store roles, previews host rule and hook changes before applying them, and
+browses global and registered project memories and tags. It bundles a matching
+`momo` sidecar for generated lifecycle hooks.
+
+Build and deployment instructions are in
+[docs/DESKTOP_DEPLOYMENT.md](docs/DESKTOP_DEPLOYMENT.md).
+
 ## Write protocol
 
 Draft notes outside the canonical store, then write through `momo`:

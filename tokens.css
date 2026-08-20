@@ -1,0 +1,66 @@
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench · theme: custom · tone: technical · anchor hue: peach-pink · nav: N3 · footer: Ft2 */
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
+:root {
+  color-scheme: light;
+
+  --color-brand-mark: oklch(69.15% 0.2361 351.16);
+  --color-accent: oklch(69.15% 0.2 351.16);
+  --color-accent-soft: oklch(94% 0.045 351.16);
+  --color-accent-ink: oklch(20% 0.025 351.16);
+  --color-focus: oklch(40% 0.16 351.16);
+
+  --color-paper: oklch(98% 0.008 351.16);
+  --color-paper-raised: oklch(99.2% 0.005 351.16);
+  --color-paper-sunken: oklch(95.5% 0.012 351.16);
+  --color-ink: oklch(20% 0.018 351.16);
+  --color-ink-secondary: oklch(37% 0.018 351.16);
+  --color-muted: oklch(49% 0.015 351.16);
+  --color-rule: oklch(85% 0.015 351.16);
+  --color-rule-strong: oklch(73% 0.02 351.16);
+
+  --color-success: oklch(47% 0.12 145);
+  --color-success-soft: oklch(94% 0.025 145);
+  --color-warning: oklch(53% 0.13 73);
+  --color-warning-soft: oklch(95% 0.035 73);
+  --color-error: oklch(52% 0.19 24);
+  --color-error-soft: oklch(95% 0.035 24);
+
+  --font-display: "Bricolage Grotesque", sans-serif;
+  --font-body: "IBM Plex Sans", sans-serif;
+  --font-data: "JetBrains Mono", monospace;
+
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-body: 0.875rem;
+  --text-ui: 0.8125rem;
+  --text-title: 1.375rem;
+  --text-section: 1.125rem;
+
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 3rem;
+
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+
+  --rule-thin: 1px;
+  --rule-focus: 2px;
+
+  --dur-instant: 0ms;
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-detail: 240ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --shadow-float: 0 12px 28px oklch(20% 0.018 351.16 / 0.08);
+  --z-base: 0;
+  --z-rail: 10;
+  --z-overlay: 20;
+}

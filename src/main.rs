@@ -1,9 +1,5 @@
-mod configure;
-mod lifecycle;
-mod logo;
-mod store;
-
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use momonogi::{configure, lifecycle, logo, store, tag};
 use serde_json::json;
 use std::fs;
 use std::io::Write;
@@ -32,6 +28,7 @@ enum Command {
     Put(PutArgs),
     Archive(ArchiveArgs),
     Access(AccessArgs),
+    Tag(TagArgs),
     Reindex(WriterRoot),
     Doctor(Root),
     Logo,
@@ -194,6 +191,38 @@ struct AccessRevokeArgs {
 }
 
 #[derive(Args)]
+struct TagArgs {
+    #[command(subcommand)]
+    command: TagCommand,
+}
+
+#[derive(Subcommand)]
+enum TagCommand {
+    List(TagListArgs),
+    Add(TagMutationArgs),
+    Remove(TagMutationArgs),
+}
+
+#[derive(Args)]
+struct TagListArgs {
+    #[arg(default_value = store::DEFAULT_GLOBAL_ROOT)]
+    root: PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct TagMutationArgs {
+    root: PathBuf,
+    slug: String,
+    tag: String,
+    #[arg(long)]
+    agent: String,
+    #[arg(long)]
+    if_match: String,
+}
+
+#[derive(Args)]
 struct ConfigureArgs {
     #[arg(long, value_enum, required = true)]
     host: Vec<configure::Host>,
@@ -265,7 +294,7 @@ fn command_init(args: InitArgs) -> Result<()> {
             .if_match
             .as_deref()
             .ok_or_else(|| Error("replacing a manifest requires --if-match".into()))?;
-        check_manifest_etag(&loaded.etag, expected)?;
+        store::assert_manifest_etag(&loaded.etag, expected)?;
         Some(loaded.manifest)
     } else {
         None
@@ -657,16 +686,6 @@ fn print_access(loaded: &store::LoadedManifest, changed: bool, json_output: bool
     Ok(())
 }
 
-fn check_manifest_etag(actual: &str, expected: &str) -> Result<()> {
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(Error(format!(
-            "manifest etag conflict: expected {expected}, current {actual}"
-        )))
-    }
-}
-
 fn command_access(args: AccessArgs) -> Result<()> {
     match args.command {
         AccessCommand::List(args) => {
@@ -675,62 +694,61 @@ fn command_access(args: AccessArgs) -> Result<()> {
             print_access(&loaded, false, args.json)
         }
         AccessCommand::Grant(args) => {
-            if !store::valid_agent_id(&args.agent) {
-                return Err(Error(format!("invalid agent id: {:?}", args.agent)));
-            }
             let root = canonical_existing(&args.root)?;
-            let _lock = store::lock_store(&root)?;
-            let mut loaded = store::load_manifest(&root)?;
-            store::assert_writer(&loaded.manifest, &args.actor)?;
-            check_manifest_etag(&loaded.etag, &args.if_match)?;
             let desired = match args.role {
                 AccessRole::Writer => store::AccessRole::Writer,
                 AccessRole::Reader => store::AccessRole::Reader,
             };
-            if store::manifest_role(&loaded.manifest, &args.agent) == Some(desired) {
-                return print_access(&loaded, false, true);
-            }
-            if desired == store::AccessRole::Reader
-                && loaded.manifest.writers.len() == 1
-                && loaded.manifest.writers[0] == args.agent
-            {
-                return Err(Error("cannot downgrade the final writer".into()));
-            }
-            loaded.manifest.writers.retain(|agent| agent != &args.agent);
-            loaded.manifest.readers.retain(|agent| agent != &args.agent);
-            match desired {
-                store::AccessRole::Writer => loaded.manifest.writers.push(args.agent),
-                store::AccessRole::Reader => loaded.manifest.readers.push(args.agent),
-            }
-            loaded.manifest.writers.sort();
-            loaded.manifest.readers.sort();
-            store::touch_manifest(&mut loaded.manifest, &args.actor);
-            loaded.etag = store::write_manifest(&root, &loaded.manifest)?;
-            print_access(&loaded, true, true)
+            let mutation = store::set_manifest_role(
+                &root,
+                &args.agent,
+                Some(desired),
+                &args.actor,
+                &args.if_match,
+            )?;
+            print_access(&mutation.loaded, mutation.changed, true)
         }
         AccessCommand::Revoke(args) => {
-            if !store::valid_agent_id(&args.agent) {
-                return Err(Error(format!("invalid agent id: {:?}", args.agent)));
-            }
             let root = canonical_existing(&args.root)?;
-            let _lock = store::lock_store(&root)?;
-            let mut loaded = store::load_manifest(&root)?;
-            store::assert_writer(&loaded.manifest, &args.actor)?;
-            check_manifest_etag(&loaded.etag, &args.if_match)?;
-            let current = store::manifest_role(&loaded.manifest, &args.agent);
-            if current.is_none() {
-                return print_access(&loaded, false, true);
-            }
-            if current == Some(store::AccessRole::Writer) && loaded.manifest.writers.len() == 1 {
-                return Err(Error("cannot revoke the final writer".into()));
-            }
-            loaded.manifest.writers.retain(|agent| agent != &args.agent);
-            loaded.manifest.readers.retain(|agent| agent != &args.agent);
-            store::touch_manifest(&mut loaded.manifest, &args.actor);
-            loaded.etag = store::write_manifest(&root, &loaded.manifest)?;
-            print_access(&loaded, true, true)
+            let mutation =
+                store::set_manifest_role(&root, &args.agent, None, &args.actor, &args.if_match)?;
+            print_access(&mutation.loaded, mutation.changed, true)
         }
     }
+}
+
+fn command_tag(args: TagArgs) -> Result<()> {
+    match args.command {
+        TagCommand::List(args) => {
+            let root = canonical_existing(&args.root)?;
+            let tags = tag::list_tags(&root)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&tags)?);
+            } else {
+                println!("[momo] {} tag(s) in {}", tags.len(), root.display());
+                for tag in tags {
+                    println!("- {} ({})", tag.name, tag.count);
+                }
+            }
+            Ok(())
+        }
+        TagCommand::Add(args) => command_tag_mutation(args, tag::TagAction::Add),
+        TagCommand::Remove(args) => command_tag_mutation(args, tag::TagAction::Remove),
+    }
+}
+
+fn command_tag_mutation(args: TagMutationArgs, action: tag::TagAction) -> Result<()> {
+    let root = canonical_existing(&args.root)?;
+    let mutation = tag::change_tag(
+        &root,
+        &args.slug,
+        &args.tag,
+        action,
+        &args.agent,
+        &args.if_match,
+    )?;
+    println!("{}", serde_json::to_string(&mutation)?);
+    Ok(())
 }
 
 fn command_reindex(args: WriterRoot) -> Result<()> {
@@ -783,6 +801,7 @@ fn run(command: Command) -> Result<()> {
         Command::Put(args) => command_put(args),
         Command::Archive(args) => command_archive(args),
         Command::Access(args) => command_access(args),
+        Command::Tag(args) => command_tag(args),
         Command::Reindex(args) => command_reindex(args),
         Command::Doctor(args) => command_doctor(args),
         Command::Logo => {

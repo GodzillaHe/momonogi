@@ -1,5 +1,13 @@
 # Rust
 /target/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+
+# Desktop frontend
+/desktop/node_modules/
+/desktop/dist/
+/desktop/*.tsbuildinfo
+/desktop/src-tauri/binaries/momo-*
 
 # OS / editor
 .DS_Store

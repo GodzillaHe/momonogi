@@ -112,6 +112,14 @@ OpenClaw 工作区规则会按当前宿主生效，避免共享的项目级 `AGE
 [docs/AGENT_SETUP.md](docs/AGENT_SETUP.md)，可复用的 Agent 协议见
 [skill/SKILL.md](skill/SKILL.md)。
 
+## 桌面应用
+
+可选的 Tauri 桌面工作台可以发现本机 Agent 宿主、管理记忆库角色、在应用前预览
+规则与 Hook 变更，并浏览全局及已注册项目中的记忆与标签。应用包内包含匹配版本的
+`momo` sidecar，供生命周期 Hook 使用。
+
+构建和部署说明见 [docs/DESKTOP_DEPLOYMENT.md](docs/DESKTOP_DEPLOYMENT.md)。
+
 ## 写入协议
 
 先在记忆库外创建草稿，再通过 `momo` 写入：

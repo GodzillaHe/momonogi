@@ -1,0 +1,25 @@
+[package]
+name = "momonogi-desktop"
+version = "0.1.0"
+description = "Desktop manager for Momonogi"
+authors = ["Momonogi contributors"]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+
+[lib]
+name = "momonogi_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+momonogi = { path = "../.." }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
