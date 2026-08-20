@@ -21,9 +21,14 @@ function run(command, args, options = {}) {
 }
 
 const rustVersion = run("rustc", ["-vV"], { capture: true });
-const targetTriple = rustVersion.match(/^host:\s+(.+)$/m)?.[1]?.trim();
-if (!targetTriple) {
+const hostTriple = rustVersion.match(/^host:\s+(.+)$/m)?.[1]?.trim();
+if (!hostTriple) {
   throw new Error("cannot determine the Rust host target triple");
+}
+const requestedTarget = process.env.MOMONOGI_TARGET?.trim();
+const targetTriple = requestedTarget || hostTriple;
+if (!/^[a-zA-Z0-9_.-]+$/.test(targetTriple)) {
+  throw new Error(`invalid Rust target triple: ${JSON.stringify(targetTriple)}`);
 }
 
 run("cargo", [
@@ -45,5 +50,9 @@ mkdirSync(dirname(destination), { recursive: true });
 copyFileSync(source, destination);
 if (!extension) chmodSync(destination, 0o755);
 
-const version = run(destination, ["--version"], { capture: true }).trim();
-process.stdout.write(`Prepared ${version} for ${targetTriple}\n`);
+if (targetTriple === hostTriple) {
+  const version = run(destination, ["--version"], { capture: true }).trim();
+  process.stdout.write(`Prepared ${version} for ${targetTriple}\n`);
+} else {
+  process.stdout.write(`Prepared momo for ${targetTriple} (cross-compiled; execution skipped)\n`);
+}
