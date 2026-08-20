@@ -1,4 +1,4 @@
-name: unsigned macOS DMG
+name: macOS DMG
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to publish, for example v0.0.1-alpha.1
+        description: Existing version tag to publish, for example v0.0.1-alpha.2
         required: true
         type: string
 
@@ -66,16 +66,46 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Frontend tests
         run: pnpm test
-      - name: Build unsigned arm64 DMG
-        run: pnpm tauri build --target "$MOMONOGI_TARGET" --bundles dmg --no-sign --ci
-      - name: Prepare release files
-        id: package
+      - name: Build ad-hoc signed arm64 DMG
+        run: pnpm tauri build --target "$MOMONOGI_TARGET" --bundles dmg --ci
+      - name: Verify DMG bundle
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         shell: bash
         run: |
           dmg_dir="src-tauri/target/$MOMONOGI_TARGET/release/bundle/dmg"
-          dmg_path=$(find "$dmg_dir" -maxdepth 1 -type f -name '*.dmg' -print -quit)
-          if [[ -z "$dmg_path" ]]; then
-            echo "DMG was not produced in $dmg_dir" >&2
+          dmg_path="$dmg_dir/Momonogi_${RELEASE_VERSION}_aarch64.dmg"
+          if [[ ! -f "$dmg_path" ]]; then
+            echo "DMG was not produced at $dmg_path" >&2
+            exit 1
+          fi
+
+          mount_dir=$(mktemp -d)
+          device=""
+          cleanup() {
+            if [[ -n "$device" ]]; then
+              hdiutil detach "$device" >/dev/null || true
+            fi
+            rmdir "$mount_dir" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          device=$(hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg_path" | awk '/^\/dev\// { print $1; exit }')
+          app_path="$mount_dir/Momonogi.app"
+          codesign --verify --deep --strict --verbose=4 "$app_path"
+          file "$app_path/Contents/MacOS/momonogi-desktop" | grep -q 'arm64'
+          file "$app_path/Contents/MacOS/momo" | grep -q 'arm64'
+          "$app_path/Contents/MacOS/momo" --version
+      - name: Prepare release files
+        id: package
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          dmg_dir="src-tauri/target/$MOMONOGI_TARGET/release/bundle/dmg"
+          dmg_path="$dmg_dir/Momonogi_${RELEASE_VERSION}_aarch64.dmg"
+          if [[ ! -f "$dmg_path" ]]; then
+            echo "DMG was not produced at $dmg_path" >&2
             exit 1
           fi
           dmg_name=$(basename "$dmg_path")
